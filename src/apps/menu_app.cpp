@@ -12,6 +12,8 @@
  */
 
 #include "apps/menu_app.h"
+#include "apps/photo_printer_app.h"
+#include "apps/cine_camera_app.h"
 #include "apps/tutorial_app.h"
 
 #include <Arduino.h>
@@ -99,6 +101,8 @@ static const MenuEntry kTimeEntries[] = {
 };
 
 static const MenuEntry kCustomAppEntries[] = {
+    {"Photo Printer", &apps::photo_printer::app, PAGE_COUNT, icons::kCamera},
+    {"Cine camera", &apps::cine_camera::app, PAGE_COUNT, icons::kCamera},
     {"Productivity", nullptr, PAGE_PRODUCTIVITY, icons::kTools},
 };
 
@@ -123,7 +127,7 @@ static const PageDef kPages[PAGE_COUNT] = {
     {nullptr, kMainEntries, (int)(sizeof(kMainEntries) / sizeof(kMainEntries[0])), PAGE_COUNT},
     {"Audio", kAudioEntries, 2, PAGE_MAIN},
     {"Clock", kTimeEntries, 3, PAGE_MAIN},
-    {"Custom Apps", kCustomAppEntries, 1, PAGE_MAIN},
+    {"Custom Apps", kCustomAppEntries, (int)(sizeof(kCustomAppEntries) / sizeof(kCustomAppEntries[0])), PAGE_MAIN},
     {"Games", kGameEntries, (int)(sizeof(kGameEntries) / sizeof(kGameEntries[0])), PAGE_MAIN},
     {"Productivity", kProductivityEntries, (int)(sizeof(kProductivityEntries) / sizeof(kProductivityEntries[0])), PAGE_CUSTOM_APPS},
 };

@@ -12,12 +12,13 @@ with tempfile.TemporaryDirectory(prefix='camera-dma-compat-') as directory:
     root = Path(directory)
     headers = {
         'esp_arduino_version.h': '#define ESP_ARDUINO_VERSION_VAL(a,b,c) ((a)*10000+(b)*100+(c))\n#define ESP_ARDUINO_VERSION 20017\n',
-        'esp_camera.h': '#pragma once\nusing esp_err_t=int;using framesize_t=int;constexpr int PIXFORMAT_JPEG=4,PIXFORMAT_RGB565=0,FRAMESIZE_QVGA=5;struct camera_config_t {int pixel_format;int xclk_freq_hz;};\n',
+        'esp_camera.h': '#pragma once\nusing esp_err_t=int;using framesize_t=int;constexpr int PIXFORMAT_JPEG=4,PIXFORMAT_RGB565=0,PIXFORMAT_GRAYSCALE=3,FRAMESIZE_QVGA=5,FRAMESIZE_XGA=10,FRAMESIZE_QXGA=20;struct camera_config_t {int pixel_format;int xclk_freq_hz;};\n',
         'esp_heap_caps.h': '#include <stddef.h>\n#define MALLOC_CAP_DMA 8\nsize_t heap_caps_get_largest_free_block(unsigned);\n',
         'esp_log.h': '#define ESP_LOGW(...) ((void)0)\n',
+        'hal/hal_tasks.h': '#pragma once\n#include <stdint.h>\nusing BaseType_t=int;using UBaseType_t=unsigned;using TaskFunction_t=void(*)(void*);using TaskHandle_t=void*;namespace hal{namespace tasks{enum class Id{CineCameraHal};struct Spec{unsigned stackBytes;};const Spec& spec(Id);}}\n',
     }
     for name, content in headers.items():
-        (root/name).write_text(content)
+        (root/name).parent.mkdir(parents=True,exist_ok=True);(root/name).write_text(content)
     (root/'main.cpp').write_text(r'''
 #include <cassert>
 #include <cstdint>
@@ -25,15 +26,21 @@ with tempfile.TemporaryDirectory(prefix='camera-dma-compat-') as directory:
 #include <initializer_list>
 #include "esp_camera.h"
 #include "esp_heap_caps.h"
+#include "hal/hal_tasks.h"
 extern "C" bool __wrap_ll_cam_dma_sizes(void*);
 extern "C" int __wrap_cam_config(const camera_config_t*,int,uint16_t);
 struct Camera {uint32_t item=1,buffer=16384,chunk=1024,count=16,node=1024;uint32_t untouched=0xabcdef12;};
 Camera camera;
+unsigned lastStack=0;
+namespace hal{namespace tasks{const Spec& spec(Id){static Spec s{4096};return s;}}}
+extern "C" BaseType_t __wrap_xTaskCreatePinnedToCore(TaskFunction_t,const char*,uint32_t,void*,UBaseType_t,TaskHandle_t*,BaseType_t);
+extern "C" BaseType_t __real_xTaskCreatePinnedToCore(TaskFunction_t,const char*,uint32_t stack,void*,UBaseType_t priority,TaskHandle_t*,BaseType_t core){lastStack=stack;assert(priority==23&&core==0);return 42;}
+
 size_t largest=50000;bool sdkOk=true;int sdkResult=0,calls=0,heapQueries=0;
 size_t heap_caps_get_largest_free_block(unsigned caps){assert(caps==MALLOC_CAP_DMA);++heapQueries;return largest;}
 extern "C" bool __real_ll_cam_dma_sizes(void*){++calls;return sdkOk;}
 extern "C" int __real_cam_config(const camera_config_t*,int size,uint16_t pid){
- assert(size==5&&pid==0x3660);assert(__wrap_ll_cam_dma_sizes(&camera)==sdkOk);return sdkResult;
+ assert((size==5||size==10||size==20)&&(pid==0x3660||pid==0x5640));assert(__wrap_ll_cam_dma_sizes(&camera)==sdkOk);assert(__wrap_xTaskCreatePinnedToCore(nullptr,"cam_task",2048,nullptr,23,nullptr,0)==42);return sdkResult;
 }
 int main(){
  const camera_config_t jpeg{4,20000000};
@@ -76,10 +83,28 @@ int main(){
   assert(__wrap_cam_config(&config,5,0x3660)==0&&!memcmp(&camera,&before,sizeof camera)&&heapQueries==0);
  }
 #endif
+ const camera_config_t raw{3,24000000};largest=50000;
+ camera={1,24576,12288,2,3072,0xabcdef12};assert(__wrap_cam_config(&raw,10,0x3660)==0);
+ assert(lastStack==4096);
+ assert(camera.buffer==12288&&camera.chunk==6144&&camera.count==2&&camera.node==2048&&camera.untouched==0xabcdef12);
+ assert(camera.buffer==2*camera.chunk&&camera.chunk%camera.node==0&&(1024*768)%camera.chunk==0);
+ camera={1,32768,16384,2,2048,0xabcdef12};assert(__wrap_cam_config(&raw,20,0x3660)==0);
+ assert(camera.buffer==12288&&camera.chunk==6144&&camera.count==2&&camera.node==2048&&lastStack==4096);
+ assert((2048*1536)%camera.chunk==0);
+ for(size_t available:{size_t(9216),size_t(11252),size_t(13311),size_t(13312),size_t(50000)}){
+  largest=available;camera={1,32768,16384,2,2048,0xabcdef12};assert(__wrap_cam_config(&raw,20,0x3660)==0);
+  const unsigned ring=available<13312?8192:12288;assert(camera.buffer==ring&&camera.chunk==ring/2&&camera.node==2048&&camera.count==2);
+  assert(camera.chunk%camera.node==0&&(2048*1536)%camera.chunk==0&&(1024*768)%camera.chunk==0);
+ }
+ camera={1,24576,12288,2,3072,0xabcdef12};assert(__wrap_cam_config(&raw,5,0x3660)==0&&camera.buffer==24576&&lastStack==2048);
+ camera={1,24576,12288,2,3072,0xabcdef12};assert(__wrap_cam_config(&raw,10,0x5640)==0&&camera.buffer==24576);
+ camera={1,24576,12288,2,3073,0xabcdef12};assert(__wrap_cam_config(&raw,10,0x3660)==0&&camera.node==3073);
+ camera={1,24576,12288,2,3072,0xabcdef12};assert(__wrap_ll_cam_dma_sizes(&camera)&&camera.buffer==24576);
  sdkOk=false;sdkResult=-1;camera={};heapQueries=0;
  assert(__wrap_cam_config(&jpeg,5,0x3660)==-1&&camera.buffer==16384&&heapQueries==0);
  sdkOk=true;assert(__wrap_ll_cam_dma_sizes(nullptr));
  camera={};assert(__wrap_ll_cam_dma_sizes(&camera)&&camera.buffer==16384);
+ assert(__wrap_xTaskCreatePinnedToCore(nullptr,"cam_task",2048,nullptr,23,nullptr,0)==42&&lastStack==2048);
 }
 ''')
     for flags in ([],['-DORIGAMI_RGB_PREVIEW_TRIAL']):
