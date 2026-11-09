@@ -1,7 +1,7 @@
 """Render the current Cine UI into one shareable flow PNG; never embeds the input photo in Git."""
 
 from pathlib import Path
-import argparse, json, math, struct, subprocess, tempfile, textwrap
+import argparse, json, math, struct, subprocess, tempfile
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,11 +18,11 @@ def function(source, signature):
     return source[start:end]
 
 
-def native_frames(image, output):
+def native_frames(image, output, shutter_us=16667):
     with tempfile.TemporaryDirectory(prefix="cine-flow-render-") as td:
         p = Path(td)
         (p / "Arduino.h").write_text(
-            "#pragma once\n#include <stdint.h>\n#include <stddef.h>\n#include <pgmspace.h>\n"
+            "#pragma once\n#include <stdint.h>\n#include <stddef.h>\n#include <pgmspace.h>\nusing std::min; using std::max;\n"
         )
         (p / "pgmspace.h").write_text(
             "#pragma once\n#define PROGMEM\n#define pgm_read_byte(a) (*(const unsigned char*)(a))\n"
@@ -30,6 +30,10 @@ def native_frames(image, output):
         (p / "Fonts/GFXFF").mkdir(parents=True)
         (p / "Fonts/GFXFF/gfxfont.h").write_text(
             "#pragma once\n#include <stdint.h>\nstruct GFXglyph{uint32_t bitmapOffset;uint8_t width,height,xAdvance;int8_t xOffset,yOffset;};struct GFXfont{uint8_t* bitmap;GFXglyph* glyph;uint16_t first,last;uint8_t yAdvance;};\n"
+        )
+        (p / "TB_TFT_eSPI.h").write_text(
+            "#pragma once\nstruct Canvas; using TFT_eSPI=Canvas;\n"
+            "constexpr unsigned TL_DATUM=0, TC_DATUM=1, TR_DATUM=2, MC_DATUM=4;\n"
         )
         photo = (
             ImageOps.exif_transpose(Image.open(image))
@@ -64,6 +68,69 @@ def native_frames(image, output):
                 ),
             )
         )
+        tft = (ROOT / "lib/TB_TFT_eSPI/TFT_eSPI.cpp").read_text()
+        code = code.replace(
+            "// @TFT_FUNCTIONS@",
+            "\n".join(
+                function(tft, signature).replace("TFT_eSPI::", "")
+                for signature in [
+                    "void TFT_eSPI::fillCircleHelper(",
+                    "void TFT_eSPI::fillRoundRect(",
+                    "uint16_t TFT_eSPI::alphaBlend(uint8_t alpha, uint16_t fgc, uint16_t bgc)",
+                    "int16_t TFT_eSPI::drawFlashFont(",
+                ]
+            ),
+        )
+        lists = (ROOT / "src/ui/list_view.cpp").read_text()
+        code = code.replace(
+            "// @LIST_FUNCTIONS@",
+            "struct ListGeometry { safe_area::Box firstRow, scrollbar; };\n"
+            + "\n".join(
+                function(lists, signature)
+                for signature in [
+                    "static int fittingRows(",
+                    "static ListGeometry prepareLayout(",
+                    "void ListView::clampScroll(",
+                    "void ListView::buildScene(",
+                ]
+            ),
+        )
+        status = (ROOT / "src/ui/system_status_bar.cpp").read_text()
+        wifi = (ROOT / "src/ui/wifi_icon.cpp").read_text()
+        alpha = (ROOT / "src/ui/alpha_bitmap.cpp").read_text()
+        code = code.replace(
+            "// @STATUS_FUNCTIONS@",
+            '#include "ui/text_field.h"\n'
+            '#include "ui/battery_indicator.h"\n'
+            '#include "ui/status_bar_palette.h"\n'
+            '#include "config/ui_layout.h"\n'
+            '#include "assets/battery_icon.h"\n'
+            '#include "assets/wifi_icons.h"\n'
+            "namespace hal { namespace display { Canvas& canvas() { assert(false); static Canvas c; return c; } }}\n"
+            "namespace ui {\nconstexpr int kWifiIconSize=22;\n"
+            "static TextField s_clockField;\n"
+            "enum BarPart : uint8_t { WifiPart=1, BatteryPart=2, ClockPart=4, AllParts=7 };\n"
+            "uint32_t batteryAnimationTime() { return 1200; }\n"
+            + function(wifi, "static uint16_t blendWifiInk(")
+            + "\n"
+            + function(wifi, "void drawWifiIcon(").replace(
+                "bool transparent)", "bool transparent=false)"
+            )
+            + "\n"
+            + function(alpha, "void drawAlphaBitmap(")
+            + "\n"
+            + "\n".join(
+                function(status, signature)
+                for signature in [
+                    "static void drawBleGlyph(",
+                    "static void paintClockCentered(",
+                    "static void drawBarGlyphs(",
+                ]
+            )
+            + "\n} // namespace ui\n",
+        )
+        # The platform adapter and the actual safe-area painter share one TU.
+        code += '\n#include "' + str(ROOT / "src/ui/safe_area_draw.cpp") + '"\n'
         (p / "render.cpp").write_text(code)
         subprocess.run(
             [
@@ -82,22 +149,184 @@ def native_frames(image, output):
             check=True,
         )
         subprocess.run(
-            [str(p / "render"), str(p / "photo.rgb565"), str(output)], check=True
+            [str(p / "render"), str(p / "photo.rgb565"), str(output), str(shutter_us)],
+            check=True,
         )
     return {f.stem: Image.open(f).convert("RGB") for f in output.glob("*.ppm")}
 
 
-def render(image, output, home=None):
+def focused_dark_sheet(frames):
+    """Show the core interaction loops, preserving native screenshot pixels."""
+    width, height = 2160, 2440
+    sheet = Image.new("RGB", (width, height), "black")
+    draw = ImageDraw.Draw(sheet)
+    fontroot = Path("/usr/share/fonts/truetype/dejavu")
+    states = []
+
+    def font(size, bold=False):
+        return ImageFont.truetype(
+            str(fontroot / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf")), size
+        )
+
+    def text(x, y, value, size=23, bold=False):
+        draw.text((x, y), value, font=font(size, bold), fill="white")
+
+    def wrap(x, y, value, max_width=550, size=23):
+        row = ""
+        for word in value.split():
+            trial = (row + " " + word).strip()
+            if row and draw.textlength(trial, font=font(size)) > max_width:
+                text(x, y, row, size)
+                y += 33
+                row = word
+            else:
+                row = trial
+        if row:
+            text(x, y, row, size)
+            y += 33
+        return y
+
+    def card(col, y, key, title, body):
+        x = 80 + col * 700
+        states.append(key)
+        text(x, y, title, 29, True)
+        frame = frames[key].resize((560, 480), Image.Resampling.NEAREST)
+        sheet.paste(frame, (x, y + 52))
+        draw.rectangle((x - 1, y + 51, x + 560, y + 532), outline="#555555")
+        wrap(x, y + 550, body)
+
+    def arrow(x1, x2, y, label, reverse=False):
+        draw.line((x1, y, x2, y), fill="white", width=3)
+        draw.polygon([(x2, y), (x2 - 12, y - 7), (x2 - 12, y + 7)], fill="white")
+        if reverse:
+            draw.polygon([(x1, y), (x1 + 12, y - 7), (x1 + 12, y + 7)], fill="white")
+        tw = draw.textlength(label, font=font(21, True))
+        text((x1 + x2 - tw) / 2, y - 37, label, 21, True)
+
+    def note(col, y, title, entries):
+        x = 80 + col * 700
+        text(x, y, title, 29, True)
+        yy = y + 70
+        for heading, body in entries:
+            text(x, yy, heading, 24, True)
+            yy = wrap(x, yy + 40, body) + 32
+
+    text(80, 45, "Cine camera", 68, True)
+    text(84, 135, "Key screens & user flows", 30)
+    text(
+        84,
+        198,
+        "A  Settings / back     B  Take photo     C  Click wheel     Turn  Adjust / browse",
+        25,
+    )
+    draw.line((80, 265, 2080, 265), fill="#555555", width=2)
+
+    card(
+        0, 310, "home", "01   Home", "B opens Cine. A+B exits Cine to the previous app."
+    )
+    card(
+        1,
+        310,
+        "live",
+        "02   Viewfinder",
+        "Clean at rest. A opens settings; turn the wheel to adjust shutter speed.",
+    )
+    card(
+        2,
+        310,
+        "saved",
+        "03   Photo saved",
+        "B captures a 3MP JPEG. Saved feedback clears after 1.8s; live preview continues.",
+    )
+    arrow(660, 760, 595, "B")
+    arrow(1360, 1460, 595, "B")
+
+    card(
+        0,
+        1000,
+        "shutter",
+        "04   Adjust shutter",
+        "Turn adjusts 1/1000–1/10s. Both readouts appear; the active row is blue.",
+    )
+    card(
+        1,
+        1000,
+        "wb-sunny",
+        "05   Adjust white balance",
+        "C switches SS / WB with a haptic. Turn cycles Sunny, Cloudy, Office and Home.",
+    )
+    arrow(660, 760, 1285, "C", reverse=True)
+    note(
+        2,
+        1000,
+        "Wheel interaction",
+        [
+            (
+                "Viewfinder → readouts",
+                "Turn to adjust the selected value, or click C to switch modes.",
+            ),
+            (
+                "Readouts → viewfinder",
+                "After 2s without adjustment, both readouts snap out. No fade; values and mode are retained.",
+            ),
+            ("Default", "Shutter mode, with Sunny white balance."),
+        ],
+    )
+
+    card(
+        0,
+        1690,
+        "settings-ss",
+        "06   Settings",
+        "A from the viewfinder opens this list. Turn to browse; C starts editing.",
+    )
+    card(
+        1,
+        1690,
+        "settings-ss-edit",
+        "07   Edit a setting",
+        "Turn changes the value. C or A finishes editing; A from the list returns to the viewfinder.",
+    )
+    arrow(660, 760, 1975, "C", reverse=True)
+    note(
+        2,
+        1690,
+        "Return & recovery",
+        [
+            (
+                "Settings → viewfinder",
+                "A while browsing, or C on Back to camera. The camera stays initialized.",
+            ),
+            (
+                "Save failure",
+                "A brief failure badge appears in the viewfinder. Press B to retry.",
+            ),
+            (
+                "Camera unavailable",
+                "A returns to the previous app. Reopen Cine to retry.",
+            ),
+        ],
+    )
+    text(
+        80,
+        2382,
+        "280 × 240 screens at 2×  ·  IMG_6997.jpg  ·  Native firmware pixels · supplied photo in previews",
+        22,
+    )
+    return sheet, states
+
+
+def render(
+    image, output, home=None, layout="full", captured_screens=None, shutter_us=16667
+):
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="cine-flow-frames-") as td:
-        frames = native_frames(image, Path(td))
+        frames = native_frames(image, Path(td), shutter_us)
         if home:
-            frames["home"] = (
-                Image.open(home)
-                .convert("RGB")
-                .resize((280, 240), Image.Resampling.NEAREST)
-            )
+            frames["home"] = Image.open(home).convert("RGB")
+            if frames["home"].size != (280, 240):
+                raise ValueError("Home capture must be native 280x240 pixels")
         else:
             # Context fallback is explicitly schematic; the app frames use source renders.
             h = Image.new("RGB", (280, 240), "white")
@@ -105,6 +334,65 @@ def render(image, output, home=None):
             d.rounded_rectangle((64, 81, 115, 145), radius=18, fill="#173256")
             d.rounded_rectangle((159, 81, 210, 145), radius=18, fill="#173256")
             frames["home"] = h
+        if captured_screens:
+            for key in frames:
+                capture = Path(captured_screens) / (key + ".png")
+                if capture.exists():
+                    im = Image.open(capture).convert("RGB")
+                    if im.size != (280, 240):
+                        raise ValueError(
+                            f"Device capture must be native 280x240: {capture}"
+                        )
+                    frames[key] = im
+        if layout == "focused-dark":
+            sheet, states = focused_dark_sheet(frames)
+            sheet.save(output)
+            frames_dir = output.parent / (output.stem + "-screens")
+            frames_dir.mkdir(exist_ok=True)
+            for key in states:
+                frames[key].save(frames_dir / (key + ".png"))
+            output.with_suffix(".json").write_text(
+                json.dumps(
+                    {
+                        "source_photo": str(Path(image).resolve()),
+                        "output": str(output.resolve()),
+                        "size": list(sheet.size),
+                        "native_screen": [280, 240],
+                        "scale": 2,
+                        "states": states,
+                        "layout": layout,
+                        "shutter_us": shutter_us,
+                        "ui_source": "production Cine raster, list layout, safe-area painter and TFT glyph/shape raster",
+                        "captured_screens": (
+                            str(captured_screens) if captured_screens else None
+                        ),
+                        "home": "device capture" if home else "schematic context",
+                        "state_sources": {
+                            key: (
+                                "device framebuffer"
+                                if (key == "home" and home)
+                                or (
+                                    captured_screens
+                                    and (
+                                        Path(captured_screens) / (key + ".png")
+                                    ).exists()
+                                )
+                                else (
+                                    "production renderer with supplied photo"
+                                    if key in ("live", "saved", "shutter", "wb-sunny")
+                                    else "production renderer; illustrative system status"
+                                )
+                            )
+                            for key in states
+                        },
+                        "private_photo_committed": False,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            print(output)
+            return
         W, H = 3480, 4220
         sheet = Image.new("RGB", (W, H), "#f3f1ed")
         draw = ImageDraw.Draw(sheet)
@@ -546,5 +834,10 @@ if __name__ == "__main__":
     p.add_argument("--image", required=True, type=Path)
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--home", type=Path)
+    p.add_argument("--layout", choices=("full", "focused-dark"), default="full")
+    p.add_argument(
+        "--captured-screens", type=Path, help="Native device PNGs keyed by state name"
+    )
+    p.add_argument("--shutter-us", type=int, default=16667)
     a = p.parse_args()
-    render(a.image, a.output, a.home)
+    render(a.image, a.output, a.home, a.layout, a.captured_screens, a.shutter_us)

@@ -24,6 +24,7 @@ checks = [
     "test_cine_jpeg_preview",
     "test_cine_subtle_overlay_view",
     "test_cine_interactions",
+    "test_cine_flow",
     "test_navigation_presentation",
     "test_camera_dma_compat",
     "test_camera_session",

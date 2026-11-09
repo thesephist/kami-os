@@ -7,8 +7,11 @@
 #include "ui/cine_camera_view.h"
 #include "core/cine_controls.h"
 #include "ui/list_row.h"
+#include "ui/layout_metrics.h"
 #include "ui/default_font_metrics.h"
-#include "ui/safe_area_layout.h"
+#include "ui/safe_area_draw.h"
+#include "ui/scrollbar_layout.h"
+#include "ui/list_scroll_geometry.h"
 #include <Fonts/Instrument/data.inc>
 struct Canvas {
   std::vector<uint16_t> pixels = std::vector<uint16_t>(280 * 240, 0xffff);
@@ -26,19 +29,37 @@ struct Canvas {
       for (int xx = 0; xx < w; ++xx)
         fillRect(x + xx, y + yy, 1, 1, p[yy * w + xx]);
   }
-  void rounded(int x, int y, int w, int h, int r, uint16_t ink) {
-    for (int yy = 0; yy < h; ++yy)
-      for (int xx = 0; xx < w; ++xx) {
-        int dx = xx < r        ? r - xx - 1
-                 : xx >= w - r ? xx - (w - r)
-                               : 0,
-            dy = yy < r        ? r - yy - 1
-                 : yy >= h - r ? yy - (h - r)
-                               : 0;
-        if (dx * dx + dy * dy <= r * r)
-          fillRect(x + xx, y + yy, 1, 1, ink);
-      }
+  bool _vpOoB = false, inTransaction = false, lockTransaction = false;
+  uint8_t textfont = 1, textsize = 1, datum = 0;
+  uint16_t textcolor = 0, textbgcolor = 0xffff;
+  int width() const { return 280; }
+  int height() const { return 240; }
+  void end_tft_write() {}
+  void drawFastHLine(int x, int y, int w, uint32_t color) { fillRect(x, y, w, 1, color); }
+  void drawPixel(int x, int y, uint16_t color) { fillRect(x, y, 1, 1, color); }
+  void setTextFont(uint8_t f) { textfont = f; }
+  void setTextSize(uint8_t size) { textsize = size; }
+  void setTextWrap(bool, bool) {}
+  void setTextColor(uint16_t fg) { textcolor = textbgcolor = fg; }
+  void setTextColor(uint16_t fg, uint16_t bg) {
+    textcolor = fg;
+    textbgcolor = bg;
   }
+  void setTextDatum(uint8_t value) { datum = value; }
+  uint8_t getTextDatum() const { return datum; }
+  int fontHeight(uint8_t = 0) const { return flash_font::height(textsize); }
+  int textWidth(const char *value, uint8_t = 0) const {
+    return ui::default_font::width(value, textsize);
+  }
+  int16_t drawString(const char *value, int x, int y, uint8_t = 0) {
+    assert(datum == 0); // safe_area::paint resolves all alignment before this call.
+    const int start = x;
+    for (const unsigned char *ch = (const unsigned char *)value; *ch; ++ch)
+      x += drawFlashFont(*ch, x, y, textcolor, textbgcolor, textsize);
+    return x - start;
+  }
+  // Extracted verbatim from the pinned TFT library by render_cine_flow.py.
+  // @TFT_FUNCTIONS@
   void text(const std::string &value, int x, int y, int size, uint16_t ink) {
     ui::instrument_text::text(*this, value.c_str(), x, y, instrument::fonts[size - 1], ink);
   }
@@ -54,6 +75,7 @@ struct Canvas {
     fclose(f);
   }
 };
+// @STATUS_FUNCTIONS@
 namespace ui {
 namespace scene {
 enum class TextAlign { TopLeft, TopCenter, MiddleCenter };
@@ -65,7 +87,8 @@ struct Node {
   std::string text;
   uint16_t fg = 0, bg = 0;
   unsigned size = 1, radius = 0;
-  bool label = false, bitmapTransparent = false;
+  bool label = false, bitmapTransparent = false, scrollOnFocus = false;
+  TextAlign align = TextAlign::TopLeft;
 };
 struct Scene {
   std::vector<Node> nodes;
@@ -78,7 +101,8 @@ struct Scene {
     nodes.push_back(n);
     return &nodes.back();
   }
-  Node *addBitmap(const char *, Box b, const uint8_t *, int, int, uint16_t fg, uint16_t bg) {
+  Node *addBitmap(const char *, Box b, const uint8_t *, int, int, uint16_t fg, uint16_t bg, int = 0,
+                  int = 1) {
     return addRect("", b, bg);
   }
   Node *addLabel(const char *, Box b, const char *text, uint16_t fg, uint16_t bg, int size = 1,
@@ -90,21 +114,24 @@ struct Scene {
     n.bg = bg;
     n.size = size;
     n.label = true;
-    if (align != TextAlign::TopLeft) {
-      int width = ui::instrument_text::width(text, instrument::fonts[size - 1]);
-      n.rect.x += std::max(0, (b.w - width) / 2);
-      if (align == TextAlign::MiddleCenter)
-        n.rect.y += (b.h - instrument::fonts[size - 1].height) / 2;
-    }
+    n.align = align;
     nodes.push_back(n);
     return &nodes.back();
   }
   void render(Canvas &c) {
     for (const auto &n : nodes) {
-      if (n.label)
-        c.text(n.text, n.rect.x, n.rect.y, n.size, n.fg);
+      if (n.label) {
+        c.setTextFont(1);
+        c.setTextSize(n.size);
+        c.setTextColor(n.fg, n.bg);
+        const uint8_t datum = n.align == TextAlign::TopCenter      ? TC_DATUM
+                              : n.align == TextAlign::MiddleCenter ? MC_DATUM
+                                                                   : TL_DATUM;
+        safe_area::drawLabel(c, n.text.c_str(), {n.rect.x, n.rect.y, n.rect.w, n.rect.h}, datum, 1);
+      } else if (n.radius)
+        c.fillRoundRect(n.rect.x, n.rect.y, n.rect.w, n.rect.h, n.radius, n.bg);
       else
-        c.rounded(n.rect.x, n.rect.y, n.rect.w, n.rect.h, n.radius, n.bg);
+        c.fillRect(n.rect.x, n.rect.y, n.rect.w, n.rect.h, n.bg);
     }
   }
 };
@@ -112,29 +139,17 @@ void setCurrentScene(Scene *) {}
 } // namespace scene
 } // namespace ui
 namespace ui {
+using ItemFn = ListItem (*)(int, void *);
 struct ListView {
-  int selected = 0, totalItems = 3;
-  template <class Fn>
-  void buildScene(scene::Scene &scene, int x, int y, int w, int, Fn itemFn, void *ctx,
-                  uint16_t selBg, uint16_t selFg, uint16_t bg, uint16_t, uint16_t) {
-    for (int index = 0; index < totalItems; ++index) {
-      const bool sel = index == selected;
-      const ListItem item = itemFn(index, ctx);
-      const auto box = safe_area::fitBox({x + 14, y + 2 + index * 37, w - 14 - 3 - 5 - 7, 35});
-      auto row = presentListRow(item, sel, box.x, box.y, box.w, 35, selBg, selFg, bg);
-      scene.addRect("row", {int16_t(box.x), int16_t(box.y), int16_t(box.w), int16_t(box.h)},
-                    row.background, 5);
-      scene.addLabel("label",
-                     {int16_t(row.textX), int16_t(row.textY), int16_t(row.labelWidth - 4),
-                      int16_t(row.textHeight)},
-                     sel ? item.label : row.label, row.foreground, row.background, 2);
-      if (row.indicator == ListRowPresentation::Indicator::Chevron)
-        scene.addLabel("next",
-                       {int16_t(row.indicatorX), int16_t(row.textY), 16, int16_t(row.textHeight)},
-                       ">", row.foreground, row.background, 2);
-    }
-  }
+  int selected = 0, scrollFirst = 0, totalItems = 3, visibleRows = 0;
+  int rowH = layout::kListRowH, rowPitch = layout::kListRowPitch, topPad = layout::kListTopPad,
+      leftX = layout::kListLeftInset, scrollbarW = layout::kListScrollbarW,
+      scrollbarPad = layout::kListScrollbarGap, scrollbarRight = layout::kListRightInset;
+  void clampScroll();
+  void buildScene(scene::Scene &, int, int, int, int, ItemFn, void *, uint16_t, uint16_t, uint16_t,
+                  uint16_t, uint16_t);
 };
+// @LIST_FUNCTIONS@
 } // namespace ui
 namespace cine {
 struct Session {
@@ -166,7 +181,8 @@ constexpr uint16_t bg = 0xffff, fg = 0, muted = 0x632c;
 uint32_t millis() { return 100; }
 // @APP_FUNCTIONS@
 int main(int argc, char **argv) {
-  assert(argc == 3);
+  assert(argc == 3 || argc == 4);
+  const uint32_t reviewShutter = argc == 4 ? std::stoul(argv[3]) : 16667;
   std::string out = argv[2];
   std::vector<uint16_t> photo(224 * 168);
   FILE *f = fopen(argv[1], "rb");
@@ -178,12 +194,15 @@ int main(int argc, char **argv) {
     bool controls, wbMode;
     uint32_t shutter;
   };
-  const Frame frames[] = {
-      {"live", 1, 0, false, false, 16667},       {"shutter", 1, 0, true, false, 16667},
-      {"wb-sunny", 1, 0, true, true, 16667},     {"wb-cloudy", 2, 0, true, true, 16667},
-      {"wb-office", 3, 0, true, true, 16667},    {"wb-home", 4, 0, true, true, 16667},
-      {"capture", 1, 1, false, false, 16667},    {"saved", 1, 5, false, false, 16667},
-      {"save-failed", 1, 6, false, false, 16667}};
+  const Frame frames[] = {{"live", 1, 0, false, false, reviewShutter},
+                          {"shutter", 1, 0, true, false, reviewShutter},
+                          {"wb-sunny", 1, 0, true, true, reviewShutter},
+                          {"wb-cloudy", 2, 0, true, true, reviewShutter},
+                          {"wb-office", 3, 0, true, true, reviewShutter},
+                          {"wb-home", 4, 0, true, true, reviewShutter},
+                          {"capture", 1, 1, false, false, reviewShutter},
+                          {"saved", 1, 5, false, false, reviewShutter},
+                          {"save-failed", 1, 6, false, false, reviewShutter}};
   for (const auto &s : frames) {
     Canvas c;
     ui::cine_view::image(c, photo.data(), 224, 168, s.stage == 1);
@@ -203,6 +222,8 @@ int main(int argc, char **argv) {
       ui::scene::Scene scene;
       build(scene, 280, 240);
       scene.render(c);
+      ui::drawBarGlyphs(c, 280, 38, 4, 99, false, true, false, "--:--", 0, false, false, false,
+                        0xffff);
       std::string id = selected == 0   ? "settings-ss"
                        : selected == 1 ? "settings-wb"
                                        : "settings-back";
@@ -216,6 +237,8 @@ int main(int argc, char **argv) {
     ui::scene::Scene scene;
     build(scene, 280, 240);
     scene.render(c);
+    ui::drawBarGlyphs(c, 280, 38, 4, 99, false, true, false, "--:--", 0, false, false, false,
+                      0xffff);
     c.save(out + (state == View::Opening ? "/preparing.ppm" : "/error.ppm"));
   }
   Canvas splash;
@@ -227,5 +250,7 @@ int main(int argc, char **argv) {
   centered("Opening", mid - 36, 1, kUiMuted);
   centered("Cine camera", mid - 6, 3, kUiFg);
   centered("...", mid + 28, 1, kUiAccent);
+  ui::drawBarGlyphs(splash, 280, 38, 4, 99, false, true, false, "--:--", 0, false, false, false,
+                    0xffff);
   splash.save(out + "/opening.ppm");
 }
