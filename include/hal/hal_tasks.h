@@ -73,6 +73,8 @@ enum class Id : uint8_t {
     VideoMic, // Concurrent video microphone RX; same camera_audio task profile
     VideoCapture, // Exclusive camera reader -> recording queue / latest preview
     VideoPreview, // Optional camera/playback JPEG decode; no display access
+    CineCameraHal, // SDK-owned cam_task, Cine RAW-only stack override; lifetime remains with esp_camera
+    PhotoPrint, // User-requested Wi-Fi photo printing
     _Count      // sentinel — do not use
 };
 

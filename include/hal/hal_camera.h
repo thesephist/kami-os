@@ -39,6 +39,9 @@ struct CameraFrame {
  * on resolution switch).
  */
 struct Tuning {
+  // Isolated OV3660 Cine mode: Bayer8 after DPC through the one-byte DMA transport.
+  bool bayer8 = false;
+  bool testPattern = false;
   /** -2..+2 (0 = neutral). Anything > 0 tends to crush highlights. */
   int8_t brightness = 0;
   /** -2..+2 (0 = neutral). +2 produces the over-contrasted "punchy" look that loses skin tones. */
@@ -152,6 +155,22 @@ bool triggerAutofocus(uint32_t timeoutMs = 5000);
 // Deinitialize camera (releases resources, powers down)
 void deinit();
 
+struct RawInfo { bool enabled=false;uint8_t black=4;uint16_t gains[3]={1024,1024,1024};uint8_t route=0,format=0,isp=0; };
+// UI-task Cine RAW controls. Wire1 under the accessory bus lock; no SCCB
+// reinitialization, sensor restart, frame-size or clock changes on adjustment.
+struct ShutterInfo {bool valid=false,manual=false;uint32_t requestedUs=0,actualUs=0,ticks=0,clockHz=0,frameUs=0;uint16_t gainQ4=0,hts=0,vts=0;};
+bool lockRawShutter(ShutterInfo* out); // Freeze settled AE/AGC; nearest safe shutter.
+bool setRawShutter(uint32_t microseconds,ShutterInfo* out); // Keep locked gain.
+struct IspExperiment {uint8_t gamma[16]={},cmx[11]={};uint32_t shutterUs=16667;uint16_t gainQ4=16;uint8_t wbMode=1;bool useSettledExposure=false;};
+struct IspReadback {bool valid=false;uint8_t gamma[16]={},cmx[11]={},flags[2]={};uint16_t wb[3]={};uint8_t wbMode=0;ShutterInfo shutter;};
+// Scoped, volatile JPEG-only experiment. Finite register allowlist, rollback on
+// write/readback failure. Caller must own the camera with no outstanding loan.
+bool configureIspExperiment(const IspExperiment& request,IspReadback* output);
+// Read live JPEG exposure registers without changing AE/AGC or camera tuning.
+bool readJpegShutter(ShutterInfo* output);
+// Snapshot volatile vendor gamma before the Cine override; output unchanged on failure.
+bool readJpegGamma(uint8_t output[16]);
+RawInfo rawInfo(); // Cached register-verified state; no I2C outside the HAL.
 // Get next frame. Returns true and fills *out; caller must call returnFrame() when done.
 bool getFrame(CameraFrame* out);
 

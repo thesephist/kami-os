@@ -37,6 +37,8 @@
 #include "services/automation.h"
 #include "services/shipping.h"
 #include "apps/factory_test_app.h"
+#include "apps/photo_printer_app.h"
+#include "apps/cine_camera_app.h"
 #include "services/manufacturing_access.h"
 #include "core/release_policy.h"
 #include "services/factory_test.h"
@@ -3052,6 +3054,8 @@ static void handleLine(char* line, uint32_t nowMs) {
     const bool readOnly=core::manufacturingReadOnlyCommand(line);
     if(!readOnly){Serial.println("MFG ERR service-access-required");return;}
   }
+  if(apps::photo_printer::handleSerialCommand(line,Serial))return;
+  if(apps::cine_camera::handleSerialCommand(line,Serial))return;
   if(tooling::handleDeviceApi(line,Serial))return;
   if(!strcmp(line,"encoder trace start") || !strcmp(line,"encoder trace stop") || !strncmp(line,"encoder trace read ",19)) {
     if(!strcmp(line,"encoder trace start"))hal::input::encoderTraceStart();
@@ -3737,6 +3741,7 @@ static void handleLine(char* line, uint32_t nowMs) {
     apps::hardware_test::dumpDiagnosticStatus(Serial);
     return;
   }
+  if (apps::photos::handleSerialCommand(line,Serial)) return;
   if (strcmp(line, "photos status") == 0) {
     services::notifyUserActivity();
     apps::photos::dumpStatus(Serial);

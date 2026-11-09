@@ -24,6 +24,7 @@
 #include "config/ui_layout.h"
 #include "config/ui_theme.h"
 #include "hal/hal_display.h"
+#include "hal/hal_photo_preview.h"
 #include "hal/hal_input.h"
 #include "nav_handler.h"
 #include "scene/screen.h"
@@ -49,6 +50,18 @@ static services::photos::Library s_library;
 static services::video::Thumbnail s_thumbnail;
 static int s_thumbnailIndex=-1;
 static char s_resumePath[272]{};
+static hal::display::PhotoPreview s_preview;
+static auto s_decoderMode=hal::display::PhotoPreview::Mode::Reduced;
+static uint32_t s_scrollAt=0,s_paintAt=0,s_scrollSequence=0;
+static bool s_scrollPending=false,s_presentPending=false,s_profile=false;
+static void photoFlushed(uint32_t at,int top,int bottom){
+ if(!s_presentPending||top>kSystemStatusBarH||bottom<218)return;
+ s_presentPending=false;if(!s_profile||s_library[s_idx].video)return;const auto& t=s_preview.timing();
+ Serial.printf("[photos-latency] seq=%lu index=%d mode=%s event_to_show_ms=%lu event_to_paint_ms=%lu flush_ms=%lu open_us=%lu alloc_us=%lu read_us=%lu decode_us=%lu compose_us=%lu image_us=%lu bytes=%u width=%u height=%u scale=%u fallback=%u path=%s\n",
+  (unsigned long)s_scrollSequence,s_idx+1,hal::display::PhotoPreview::modeName(s_decoderMode),(unsigned long)(at-s_scrollAt),(unsigned long)(s_paintAt-s_scrollAt),(unsigned long)(at-s_paintAt),
+  (unsigned long)t.openUs,(unsigned long)t.allocUs,(unsigned long)t.readUs,(unsigned long)t.decodeUs,(unsigned long)t.composeUs,(unsigned long)t.totalUs,unsigned(t.bytes),t.width,t.height,t.scale,t.fallback,s_library[s_idx].path);
+}
+
 static bool s_lastRendered = false;
 static uint32_t s_lastPixels = 0;
 static unsigned s_lastNonblack = 0;
@@ -275,7 +288,7 @@ static void onDraw(TFT_eSprite& canvas) {
     const bool video=s_library[s_idx].video;
     const bool rendered = video
         ? s_thumbnailIndex==s_idx && hal::display::drawJpegBufferScaled(s_thumbnail.data(),s_thumbnail.size(),0,kSystemStatusBarH,W,cH-22)
-        : hal::display::drawJpegFileScaled(path, 0, kSystemStatusBarH, W, cH - 22);
+        : s_preview.draw(path,0,kSystemStatusBarH,W,cH-22,s_decoderMode);
     if (!rendered) b.statusLine("photos.read_error", video && s_thumbnailIndex!=s_idx ? "Loading preview..." : "Cannot open media", kUiFg);
 
     // A sparse canvas fingerprint makes blank/stale gallery renders testable over serial.
@@ -325,6 +338,7 @@ static void onDraw(TFT_eSprite& canvas) {
     if (s_actionsOpen) drawActions(scene, W, H);
     scene.render(canvas);
 
+    if(s_scrollPending){s_scrollPending=false;s_paintAt=millis();s_presentPending=true;}
     hal::display::markAllDirty();
 }
 
@@ -333,6 +347,8 @@ static void onDraw(TFT_eSprite& canvas) {
 // ---------------------------------------------------------------------------
 
 static void activateGallery() {
+    s_profile=false;
+    hal::display::setFlushObserver(photoFlushed);
     s_resumePath[0]=0;
     s_openStartedMs = millis();
     s_openPending = true;
@@ -341,6 +357,7 @@ static void activateGallery() {
 }
 
 static void exitApp() {
+    s_scrollPending=s_presentPending=false;hal::display::setFlushObserver(nullptr);s_preview.close();
     s_browsePending = false;
     s_actionsOpen = false;
     s_thumbnail.clear();s_thumbnailIndex=-1;
@@ -352,7 +369,7 @@ static void coverGallery(){
     if(s_count && s_state==PH_VIEWING)strlcpy(s_resumePath,s_library[s_idx].path,sizeof(s_resumePath));
     exitApp();
 }
-static void resumeGallery(){loadPhotos();}
+static void resumeGallery(){hal::display::setFlushObserver(photoFlushed);loadPhotos();}
 
 // ---------------------------------------------------------------------------
 // Tick / Input
@@ -453,14 +470,23 @@ static void onInput(hal::input::InputEvent ev) {
 
     if (ev.type == ET::Scroll && ev.delta != 0) {
         const int prev = s_idx;
-        s_idx += ev.delta;
-        if (s_idx < 0)        s_idx = 0;
-        if (s_idx >= s_count) s_idx = s_count - 1;
+        s_idx = policy::moveIndex(s_idx, ev.delta, s_count);
         if (s_idx != prev) {
+            ++s_scrollSequence;s_scrollAt=millis();s_scrollPending=true;s_presentPending=false;
             s_needRender = true;
             s_needPhotoRender = true;
         }
     }
+}
+
+bool handleSerialCommand(const char* line,Stream& output){
+ if(!strcmp(line,"photos profile off")){s_profile=false;output.println("[photos] profiling=0");return true;}
+ if(strncmp(line,"photos decoder ",15))return false;
+ if(NavHandler::instance().top()!=&app){output.println("[photos] open Photos first");return true;}
+ const char* mode=line+15;
+ if(strcmp(mode,"reduced")&&strcmp(mode,"buffered")&&strcmp(mode,"legacy")){output.println("[photos] use decoder reduced|buffered|legacy");return true;}
+ s_decoderMode=!strcmp(mode,"legacy")?hal::display::PhotoPreview::Mode::Legacy:!strcmp(mode,"buffered")?hal::display::PhotoPreview::Mode::Buffered:hal::display::PhotoPreview::Mode::Reduced;
+ s_profile=true;s_preview.close();output.printf("[photos] decoder=%s\n",mode);return true;
 }
 
 static bool onChord() { return false; }

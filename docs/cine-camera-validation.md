@@ -1,0 +1,83 @@
+# Cine review validation
+
+Validated on 2026-11-03 against upstream `fbc6556389082f85b1900da6002cc9527402bf81`.
+
+- Production firmware build passed with Hello World source and menu entry removed. Photo Printer remains.
+- Independent Cine-only review-source production build passed; this isolated binary was compiled, not installed.
+- ASan/UBSan: actual capture service, allocation-failure cleanup, failed teardown/retry, scoped cleanup, null/malformed frames and extreme exposure deltas. Camera/codec mocked in service tests.
+- ASan/UBSan: actual preview methods with PSRAM-only allocation checks, stable repeated decoder reuse, failed allocation/open/dimension/partial decode, atomic frame swaps and idempotent cleanup. Decoder mocked for fault injection.
+- ASan/UBSan: actual ROM/JPEGDEC callback bounds/strides/channel mapping; actual sensor ISP transaction/readback/rollback, WB and read-only exposure telemetry; RAW tone/meter and physical shutter bounds/rollback; existing DMA adapter and Stock Camera/video composition.
+- Actual pinned JPEGDEC decoded retained native 3MP and VGA sensor JPEGs correctly; no private image files are included in the review source.
+- Architecture dependency check and its seven tests, tracked-secret/default checks, and diff whitespace checks passed.
+- Scratch-device application flash verified, boot observed without panic, protected metadata unchanged.
+- Hardware: eight Cine → Stock-reference → Cine cycles without a camera-init failure; minimum sampled contiguous DMA block **5,620 bytes**. This is a bounded stress check, not proof of indefinite leak freedom. Follow-up controls ran in a second USB session after correcting the test to await an asynchronous settings transition.
+- Hardware: settings enter/return, all five WB selections, both shutter endpoints, four native 2048×1536 JPEG captures with verified JSON sidecars, exit/re-entry, and a separate built-in Stock-camera-to-Cine transition passed.
+
+At the tested 100ms shutter, median preview interval was **301.2ms** and DMA-to-composed-display age **247.9ms**. This was a functional/memory check without a matched before/after performance control. The safety back buffer adds 75,264 bytes of PSRAM; it does not change saved image processing.
+
+The main experimental firmware retains Photo Printer quiescence hooks. The isolated review source omits only that integration glue, because upstream has no printer task. Historical RAW/color/resize diagnostics remain available through USB; they are not selected in the normal Cine mode.
+
+No whole-SDK/codec memory-safety claim is made. Persistent I2C teardown failure intentionally holds the camera reservation for retry. USB reconnection and long-duration battery/network soak remain outside this review's hardware check.
+
+
+## Sunny/Cine-only revision — November 8, 2026
+
+- Production build passed; verified application-only install on scratch `44:B1:76:C6:14:40`, with verified recovery image, unchanged protected metadata, normal boot and no panic observed.
+- Actual capture service and ISP register transaction passed ASan/UBSan host fixtures, including allocation/teardown failures, borrowed frames, bounds, failure rollback and the read-only gamma snapshot (output unchanged on read failure). Actual ISP service tests cover static WB cycling, WB failure rollback and exact vendor-gamma copying/guards. HAL/JPEG are mocked in the capture-service fixture; the register transaction uses a failure-injected register bus.
+- Dependency architecture check passed across 285 core/service/SFX files.
+- Real A events cycle Sunny → Cloudy → Office → Home → Sunny twice; no Auto. Reopening restores Sunny. Positive wheel steps shorten exposure: 1/10 s → 1/12.5 s; endpoints remain 1/1000–1/10 s. C opens a controls summary with no Stock choice and returns without another camera initialization.
+- Seven completed opens: median camera-service startup **1,951.8 ms**. Typical stages: init 686 ms, observed AE convergence 598 ms, ISP programming/readback 110 ms, first fresh decoded preview 420 ms, plus reservation/storage preparation. All seven reached the convergence criterion. These are one-scene measurements, not a worst-case bound; slower convergence retains the previous 1.1 s settling budget. The framebuffer read itself can exceed a budget boundary.
+- Earlier firmware's three USB-observed opens were approximately 3.0 s. New normal USB observations were around 2.25–2.45 s, but two USB-delivery outliers were 9.7 and 13.0 s while device-side work remained ~1.95 s. Use device phase timers to assess camera work, not those transport stalls. The device-side measurement excludes app splash drawing and subsequent panel flush.
+- Two repeated matched 3MP comparisons (vendor/sRGB/sRGB/vendor), Sunny, 40 ms requested shutter, gain 1×, same matrix/flags/JPEG quality. Four JPEGs and sidecars downloaded with CRC verification; all native pixels retained in the two labeled PNGs. Only gamma registers differ. Maximum difference at the 15 gamma knots is 4/255; highest-segment slope register is 15 vendor vs 31 Cine. The photos show a subtle difference in this scene; no larger dynamic-range or sharpness advantage is established. These are sequential captures, not identical RAW exposures. Diagnostic metadata `isp_experiment=2` identifies vendor gamma; `0` identifies Cine sRGB (the older generic `look` label is not diagnostic).
+- Captures completed in 397–420 ms including frame acquisition and SD save; no software tone pass or JPEG re-encoding. The app was left in normal Sunny/sRGB viewfinder mode.
+
+Artifacts: `.origami/artifacts/cine-sunny-only-20261108/index.html`, `device-results.json`, `gamma-registers.json` and the two full-resolution PNGs, under the scratch workspace. The earlier Cine-only handoff bundle remains a snapshot of its previous revision; this validation describes the current firmware workspace.
+
+
+## Modal wheel and same-RAW tone lab — November 9, 2026
+
+- Production build passed and the scratch application was backed up/verified, flashed/verified, and booted with protected metadata unchanged and no panic observed. Image: `cine-modal-wheel-20261109.bin`.
+- Wheel defaults to shutter; C toggles shutter/WB. A opens Settings; A/C returns with WB, shutter and wheel mode preserved. No camera restart across Settings. Persistent bottom readout includes WB/shutter/EC/gain; transient value occupies the former C gear location for a 1,200 ms idle interval. A small SS/WB mode mark remains after expiry.
+- Actual hardware verified: Sunny initial state; inverted shutter direction; active popup node and subsequent expiry while persistent values remain; C switches to WB; WB moves forward/backward and wraps without changing shutter; A Settings preserves values/mode; shutter endpoints 1/1000–1/10 s; physical B event saves native 2048×1536 `/photos/IMG_00239.jpg`; reopen restores Sunny and shutter mode. Actual display snapshots retained. Final DMA largest block: 8,180 bytes.
+- Actual ISP service tests under ASan/UBSan cover forward/backward WB wrap, no-change deltas, INT_MIN/INT_MAX, failed transaction rollback, and vendor gamma guards. Actual view rendering under ASan/UBSan covers idle/popup shutter/WB and save feedback with production Instrument font; popup state tested at 1,199/1,200 ms and timer rollover. Existing Stock camera/video composition tests passed; architecture check passed across 286 files.
+- New native RAW8 retained from scratch hardware, 3,145,728 bytes, CRC-checked download and SHA-256 `505aa1fe1267d0f163d52de46e06d3dd9bfeeae8615a3c288af787b3f934766b`. The first USB download timed out; its retry used the same retained frame, not a new exposure.
+- Offline tone lab: one fixed RAW reconstruction/color treatment; reference plus four curves (Crisp, Deep toe, Soft shoulder, Matte), each with native 2048×1536 PNG, curve plot, shared 18% anchor, source metadata and hash. Curves are applied to a floating-point linear luminance proxy before final sRGB encoding/quantization. The RAW lab is camera-native RGB, not an exact emulation of sensor demosaic/color/JPEG. Matte adds its floor neutrally rather than magnifying chroma noise. No creative curve installed as a new default.
+- All five curves checked finite/monotonic with common gray; all five native PNG sizes and local HTML links checked; JS syntax, all four comparison selections and divider endpoints exercised.
+- Stock explanation corrected: the pinned OV3660 driver's saturation −1 rewrites the CMX coefficients to roughly 90% neutral chroma. Stock contrast −1 writes Y gain 0x18, while neutral is 0x20. The report's 0.75 contrast line is explicitly a gain-only illustration, not a measured full Stock transfer; actual gamma knots and highest-segment registers come from the prior hardware readback. A future selected luminance curve cannot be assumed identical to an independent per-channel sensor-gamma approximation.
+
+Report: `.origami/artifacts/cine-modal-tone-lab-20261109/index.html`; hardware results: `modal-device-results.json`; actual screen images: `ui/device-controls.png`, all under the scratch workspace. Source remains separate from the clean earlier handoff bundle, which has not been regenerated.
+
+
+## Readable direct controls and fixed-gamma B/C/S study — November 9, 2026
+
+- Installed and verified `cine-readable-controls-20261109.bin` on the selected scratch device, with verified recovery image, unchanged protected metadata, normal boot and no panic observed.
+- A uses the Stock gear mask. Its source ink occupies 12×16 pixels in a16×16 cell; rendering the cell at24×18 produces an18×18 ink box. Both shutter and WB values are persistent beside the wheel in the ordinary Instrument size2 font, with small SS/WB labels and a > marker. The old bottom metrics row is absent. Settings now uses the shared ListView and normal row metrics, with inline shutter/WB editing and Back to camera.
+- ASan/UBSan view rendering passed all shutter/WB/save states with the production font; exact square gear ink bounds and an untouched bottom image strip are asserted. Dependency architecture check passed across286 core/services/SFX files.
+- Hardware passed: gear bitmap, no old Settings text/footer metrics, both values remain after idle, regular size2 value nodes, C changes active row, WB wheel preserves shutter, standard3-row menu with all label sizes2, WB and shutter edits work in menu, Back returns without driver initialization, shutter endpoints still1/1000–1/10 s, and physical B saves native2048×1536. Reopen restores Sunny/shutter mode. Metadata confirms ISP experiment0 and no software Filmic; the installed gamma/color pipeline remains unchanged.
+- B/C/S study uses two retained Sunny native RAW8 captures, each independently reconstructed once. Within each scene, all27 variants use the same input frame, black subtraction, orientation, WB convention and fixed sRGB transfer. No creative curve. Brightness adds−16/0/+16 display luma codes; contrast uses gain0.75/1/1.25; saturation uses the actual pinned vendor−1/0/+1 CMX tables. The gain/offset/CMX-to-RGB model is explicitly approximate and not a measured full ISP emulation. Brightness/contrast coupling and output clipping are part of the exploration; no midgray pivot is invented.
+- Verified all54 native2048×1536 PNG hashes/sizes, six labeled3×3 grids, RAW hashes, neutral-axis preservation of the three vendor tables, every scene/saturation/cell selection, and native/grid download links. The grid sheets use640×480 previews; native PNGs are linked for detail inspection. No candidate B/C/S setting was installed.
+
+Hardware report: `.origami/artifacts/cine-readable-controls-20261109/device-results.json`; screens: `ui/device-controls.png`. B/C/S report: `.origami/artifacts/cine-bcs-grids-20261109/index.html`. The prior Cine-only handoff bundle remains its earlier snapshot, not a regenerated bundle of this revision.
+
+
+## Transient translucent wheel overlay and complete gear — November 9, 2026
+
+- Installed/verified `cine-subtle-overlay-final-20261109.bin` on the selected scratch device with verified recovery image, unchanged protected metadata, normal boot and no panic observed.
+- Wheel labels/values are absent at idle. Rotation or C-mode click shows both rows; selection is the firmware kUiEdit light-blue text on both label and value. No > marker. Opacity holds1s, fades over200ms, and is zero1.2s after the last interaction. Mode is retained after hiding. Both per-row backings and the smaller photo/save capsule are rounded and50% black at full opacity.
+- Backdrops use bounded RGB565 stack spans, reading the original composed camera frame. Sprite image uploads explicitly preserve/restore the correct byte-order setting. Every draw reconstructs the photo first, preventing cumulative dimming. No per-frame heap allocation added.
+- Gear is a native20x20 eight-tooth mask with matching horizontal/vertical teeth and a rounder opening. Pixel inspection uses exact integer nearest-neighbor enlargement. During implementation, a new tightly packed mask conflicted with the standard Scene bitmap reader's byte-aligned rows. It was repacked to60 bytes with a compile-time size check. The final hardware scene dump is byte-for-byte equal to that exact array.
+- ASan/UBSan host tests cover the actual production view and actual Scene bitmap reader (native and scaled paths), native/Scene gear equivalence, quarter-turn symmetry, all cardinal teeth and center opening, padding bits, 50% white-to-RGB5650x7bef dimming, untouched rounded corners, invalid/overflowing box rejection, unchanged idle wheel-region pixels, correct selected-row blue, fade endpoints and timer rollover. Existing view states/save feedback and untouched bottom photo strip also passed. Architecture check passed across286 files.
+- Final hardware passed: idle3-node scene (photo, gear, photo hint), visible selected blue SS/WB rows after interaction, expiry restores idle while retaining mode, WB forward/backward changes, normal three-row Settings navigation/return, successful native2048x1536 B capture with Sunny, ISP curve0 and no software Filmic, and final hidden Sunny/shutter viewfinder. Screen captures and metadata are retained. Previous prototype screenshots/results are archived separately and do not certify the final bitmap layout.
+
+Report: `.origami/artifacts/cine-subtle-overlay-20261109/index.html`; hardware: `device-results.json`; screens: `ui/device-controls.png`. Existing tone/B/C/S choices remain unchanged. Earlier Cine-only handoff bundle has not been regenerated for this UI revision.
+
+
+## C0/S+1/B0 baseline — November 9, 2026
+
+- Selected the main-grid **C+0 S+1 · B0** look, superseding the earlier A3/negative-offset exploration. Production uses the exact pinned OV3660 +1 saturation CMX (`1d60030d84918a76140198`). sRGB gamma remains unchanged; SDE contrast/brightness and lens shading remain bypassed. No additional black cutoff, Filmic or software grading.
+- ASan/UBSan actual ISP-service tests verify the exact selected and neutral vendor tables, unchanged gamma, invalid-value guards, WB cycling/rollback and diagnostic fitted-matrix isolation. Actual capture-service and failure-injected HAL transaction tests passed. Architecture check: 286 files; whitespace check passed.
+- Production build and verified application-only installation on scratch `44:B1:76:C6:14:40` passed. Prior image verified for recovery; protected metadata unchanged; new boot observed without panic.
+- Hardware: default and post-shutter/post-WB captures retain saturation +1 in JSON sidecars, native 2048×1536 output, no Filmic/fitted matrix, EC0. Explicit neutral/+1 transactions read back their exact CMX bytes with identical gamma/control flags. Gamma/color enabled; SDE and lens shading off. Reopen restores Sunny, shutter mode and hidden transient wheel controls.
+- These checks validate configuration and functionality. The archived RAW grid approximates the sensor pipeline; it is not a bit-exact guarantee of final photographic appearance. This run does not retune exposure or judge quality from the current scene.
+
+Evidence: `.origami/artifacts/cine-saturation-plus1-20261109/device-results.json`; binary `.origami/artifacts/cine-saturation-plus1-20261109.bin`. Earlier handoff bundles remain historical snapshots.

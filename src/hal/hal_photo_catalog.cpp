@@ -60,6 +60,7 @@ PhotoCatalogResult PhotoCatalog::load(bool includeVideos) {
   {
     SpiLock lock;
     size_t capacity=0;
+    bool hasVideos=false;
     const char* folders[]={"/photos","/videos"};
     const int folderCount=includeVideos?2:1;
     auto accepted=[](const String& path,bool directory,bool video) {
@@ -80,7 +81,7 @@ PhotoCatalogResult PhotoCatalog::load(bool includeVideos) {
           auto& entry=files_[count_++];
           const int n=snprintf(entry.path,sizeof(entry.path),"%s/%s",folders[folder],basename(path.c_str()));
           if (n<0 || size_t(n)>=sizeof(entry.path)) {clear();return PhotoCatalogResult::ReadError;}
-          entry.modified=0;entry.video=folder==1;
+          entry.modified=0;entry.video=folder==1;hasVideos=hasVideos||entry.video;
         }
       }
       if (!pass) {
@@ -93,14 +94,15 @@ PhotoCatalogResult PhotoCatalog::load(bool includeVideos) {
       }
     }
     if (count_!=capacity) {clear();return PhotoCatalogResult::ReadError;}
-    qsort(files_,count_,sizeof(PhotoFile),includeVideos?compareMedia:comparePhotos);
+    qsort(files_,count_,sizeof(PhotoFile),hasVideos?compareMedia:comparePhotos);
     for (size_t first=0;first<count_;) {
       const uint64_t sequence=photo_policy::sequence(files_[first].path);
       size_t end=first+1;
       while (end<count_ && photo_policy::sequence(files_[end].path)==sequence) ++end;
-      // Mixed media needs actual timestamps; JPEG-only callers retain the cheap
-      // camera-ID ordering and metadata budget.
-      if (includeVideos || !sequence || end-first>1) for (size_t index=first;index<end;++index) {
+      // Only actual mixed media needs timestamps for every camera image.
+      // A photo-only library stays newest-first by monotonic capture ID even
+      // before clock sync, and avoids opening every JPEG just for metadata.
+      if (hasVideos || !sequence || end-first>1) for (size_t index=first;index<end;++index) {
         File entry=SD.open(files_[index].path,FILE_READ);
         if (!entry) {clear();return PhotoCatalogResult::ReadError;}
         const time_t modified=entry.getLastWrite();
@@ -109,8 +111,21 @@ PhotoCatalogResult PhotoCatalog::load(bool includeVideos) {
       }
       first=end;
     }
+    if (hasVideos) {
+      // The initial sequence sort puts camera images newest-first. Walk their
+      // IDs oldest-to-newest and prevent a clock reset from dating a new
+      // capture before an older one. Only the in-memory sort key is adjusted;
+      // original files and imported/video timestamps remain untouched.
+      uint64_t previous=0;
+      for (size_t i=count_;i>0;--i) {
+        auto& entry=files_[i-1];
+        if (entry.video || !photo_policy::sequence(entry.path)) continue;
+        if (entry.modified<previous) entry.modified=previous;
+        else previous=entry.modified;
+      }
+    }
+    qsort(files_,count_,sizeof(PhotoFile),hasVideos?compareMedia:comparePhotos);
   }
-  qsort(files_,count_,sizeof(PhotoFile),includeVideos?compareMedia:comparePhotos);
   timings_.totalUs=micros()-started;
   return PhotoCatalogResult::Ok;
 }
