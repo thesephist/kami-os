@@ -1,5 +1,8 @@
 # Cine review validation
 
+Local artifact paths in this historical log were migrated into `kami-os/.local/lab/`. Every `.origami/...` reference below resolves as `.local/lab/.origami/...` relative to this repository. Firmware, RAW and image bytes were preserved; path-bearing files were relocated with originals retained in the private migration archive. SDK/retired build caches live separately in `~/.cache/kami-os`.
+
+
 Validated on 2026-11-03 against upstream `fbc6556389082f85b1900da6002cc9527402bf81`.
 
 - Production firmware build passed with Hello World source and menu entry removed. Photo Printer remains.
@@ -116,3 +119,12 @@ Local evidence: `.origami/artifacts/cine-polish-design-20261109/device-results.j
 - This pass updates and validates source only. The scratch device continues running the previously installed v1.0.4-based polish build; no USB flash or OTA publication was performed. Previous hardware measurements and the design PNG remain associated with their recorded builds.
 
 Evidence: scratch `.origami/artifacts/cine-upstream-sync-20261109/source-equivalence.json`, `validation.json`, `image-info.log`, `sdk-review.log`; build artifact `.origami/artifacts/cine-upstream-v1.0.5-20261109.bin`.
+
+
+## Local workspace retirement — November 9, 2026
+
+- Retired the standalone scratch directory. Private captures, reports, experiment sources, device records and older handoff source now live in `.local/lab/`, excluded from Git. Toolchains/downloads and retired build caches moved to `~/.cache/kami-os/`; the Python environment lives in `.venv`.
+- Inventoried and verified 3,171 preserved files before location edits. Updated 205 path-bearing files and retained their exact original bytes in a verified private archive. Firmware, RAW and image bytes were unchanged. All 95 candidate/backup image references across 48 device records still match SHA-256; private symlinks resolve and active helper/state files no longer reference the deleted directory.
+- Recreated the virtualenv for its canonical path, retaining all 22 package versions and regenerating console entrypoints. Dependency checks, PlatformIO 6.2.0, serial/deploy help and SDK package discovery pass. The portable root `build.sh` successfully generates the production compilation database: all 592 commands use relocated SDK paths, and the compiler binaries run. The generated database is stored with the caches. This was a tooling/layout check, not another full firmware rebuild or device flash.
+
+Private migration inventory, original text archive and verification results are under `.local/lab/.origami/migration/`.

@@ -9,12 +9,18 @@ git clone git@github.com:thesephist/kami-os.git
 cd kami-os
 git remote add upstream https://github.com/Origami-Computing/origami-firmware-public.git
 python3 tools/run_fork_checks.py
-# With PlatformIO Core 6.2.0 installed:
-pio run -e esp32-s3-menu-n16r8-production
+# Set up the local build environment once:
+python3 -m venv .venv
+.venv/bin/python -m pip install platformio==6.2.0
+./build.sh
 python3 tools/run_fork_checks.py --sdk
 ```
 
 Host checks require Python 3 and a C++ compiler with AddressSanitizer/UndefinedBehaviorSanitizer. They use generated fixtures, not private photos, a connected device, or scratch directories. The SDK check additionally uses the pinned JPEGDEC source downloaded by the build and Pillow (`python3 -m pip install -r tools/requirements-test.txt`, in your Python environment). CI builds the production target and runs these checks. To format only added C++ files, install `clang-format==18.1.8` and run `python3 tools/format_fork.py` (or `--check`).
+
+`build.sh` uses `.venv` and keeps PlatformIO toolchains/downloads in `${XDG_CACHE_HOME:-$HOME/.cache}/kami-os/platformio`. `PLATFORMIO_CORE_DIR` and `KAMI_PYTHON` can override those defaults. The normal `.pio/libdeps` directory remains the project's library cache.
+
+Private local work lives in `.local/lab/` (ignored by Git): RAW captures, photo comparisons, retained firmware/recovery records, experiment recipes, and historical handoff source. Historical `.origami/...` evidence paths in the validation notes now resolve under `.local/lab/.origami/...`. The old standalone scratch directory has been retired; `.local/lab/.origami/migration/` contains the checksum inventory and exact pre-relocation text originals. These private records are preserved data; toolchain and retired build caches are separate in `~/.cache/kami-os`.
 
 `main` tracks this fork's `origin/main`; `upstream` is the original source repository. Tag `cine-baseline-c0-s1-b0-20261109` preserves the tested firmware before the cleanup pass. Tag `pre-upstream-sync-20261109` preserves the published v1.0.4-based fork before rebasing onto upstream v1.0.5. Useful USB RAW/ISP/resize diagnostics remain available for experimentation; the unreachable old paired-capture path and UI-only remnants were removed. Printer credentials and Wi-Fi settings are provisioned on-device, never in Git.
 
