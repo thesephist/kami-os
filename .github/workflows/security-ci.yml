@@ -52,6 +52,10 @@ jobs:
           python3 tools/check_sdk_review.py --map .pio/build/esp32-s3-menu-n16r8-production/firmware.map
           python3 tools/test_sd_write_compat.py
           python3 tools/test_ota_boot_health.py
+      - name: Fork camera and gallery regressions
+        run: |
+          "$RUNNER_TEMP/pio/bin/pip" install -r tools/requirements-test.txt
+          "$RUNNER_TEMP/pio/bin/python" tools/run_fork_checks.py --sdk
       - name: Analytics durability and Public default regressions
         env:
           ARDUINOJSON_SRC: .pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src

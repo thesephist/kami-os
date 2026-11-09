@@ -1,0 +1,2 @@
+# Synthetic JPEG gallery fixtures and image agreement checks (--sdk).
+Pillow==11.3.0
