@@ -1,4 +1,4 @@
-> **thesephist/kami-os fork.** Based on upstream `fbc6556` (v1.0.4). Adds Cine camera, Photo Printer, and a faster newest-first Photos gallery with wraparound. The built-in Camera remains available.
+> **thesephist/kami-os fork.** Based on upstream `fbc6556` (v1.0.4). Adds Cine camera, Photo Printer, and a faster newest-first Photos gallery with wraparound. Home B opens Cine; the built-in Camera remains available in the application selector.
 >
 > Cine defaults to Sunny WB and **C+0 S+1 · B0**: the sensor sRGB approximation, exact vendor +1 saturation matrix, and native 3MP JPEG saves. See [stock/Cine differences](docs/cine-camera-review.md) and [validation](docs/cine-camera-validation.md).
 
