@@ -128,3 +128,12 @@ Evidence: scratch `.origami/artifacts/cine-upstream-sync-20261109/source-equival
 - Recreated the virtualenv for its canonical path, retaining all 22 package versions and regenerating console entrypoints. Dependency checks, PlatformIO 6.2.0, serial/deploy help and SDK package discovery pass. The portable root `build.sh` successfully generates the production compilation database: all 592 commands use relocated SDK paths, and the compiler binaries run. The generated database is stored with the caches. This was a tooling/layout check, not another full firmware rebuild or device flash.
 
 Private migration inventory, original text archive and verification results are under `.local/lab/.origami/migration/`.
+
+## Final design review and v1.0.5 installation — November 9, 2026
+
+- The focused seven-screen sheet uses white annotations on black, actual Home/settings framebuffer captures, and production viewfinder renders with the supplied reference photo. Menu layout, glyph blending, safe-area placement, rounded rectangles and system chrome now use production routines. Both settings states match the installed device's entire 280×202 application area with zero differing pixels; dynamic status pixels are preserved in the captures. See [the design review notes](cine-camera-design-review.md) for reproduction and fidelity limits.
+- All 20 existing fork checks plus the new design-sheet regression passed. The production build and reviewed SDK/TLS linkage check passed (84 linked archives). The diagram work changes no firmware runtime source.
+- Installed the v1.0.5 production image built from `ce862cc` on the selected scratch device. Its previous v1.0.4 application was backed up and verified before writing; the new flash digest matched, and protected partition/NVS/OTA metadata and shipping data remained unchanged. Normal v1.0.5 boot was observed with no panic reported.
+- On the installed build, three Home B → Cine opens restored Sunny/shutter defaults; settings editing, wheel WB changes, readout hiding, native 2048×1536 capture and metadata, A+B → Home, and the original Camera through the application selector passed. The device was left at Home. This smoke test does not establish a fix for the separately reported intermittent camera-availability issue.
+
+Private evidence: `.local/lab/.origami/artifacts/cine-session-final-20261109/` contains the build checksum, pixel comparison, complete device captures, installed-device results and diagram manifest. Personal photos, captures, firmware images and device backups remain outside Git.
