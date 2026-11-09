@@ -1,5 +1,5 @@
 from pathlib import Path
-import tempfile,subprocess
+import tempfile,subprocess,sys
 F=Path(__file__).resolve().parents[1];lib=F/'.pio/libdeps/esp32-s3-menu-n16r8-production/JPEGDEC/src'
 with tempfile.TemporaryDirectory(prefix='photo-preview-') as td:
  p=Path(td)
@@ -60,7 +60,7 @@ import sys
 for w,h in [(2048,1536),(640,480),(777,555),(481,641),(32,24),(1,1),(1280,720)]:
  g=Image.linear_gradient('L');im=Image.merge('RGB',(g.rotate(90).resize((w,h)),g.resize((w,h)),Image.new('L',(w,h),80)));im.save(sys.argv[1]+'/'+str(w)+'x'+str(h)+'.jpg',quality=92)
 '''
- subprocess.run(['/usr/bin/python3','-c',generator,str(p)],check=True);images+=list(p.glob('*.jpg'))
+ subprocess.run([sys.executable,'-c',generator,str(p)],check=True);images+=list(p.glob('*.jpg'))
  for i,source in enumerate(images):
   dest=p/(str(i)+'.ppm');subprocess.run([str(p/'test'),str(source),str(dest)],check=True)
   compare=r'''from PIL import Image,ImageChops,ImageStat
@@ -72,12 +72,13 @@ if w>280 or h>180:
 ref=im.resize((w,h),Image.Resampling.BOX);out=Image.open(sys.argv[2]).crop(((280-w)//2,38+(180-h)//2,(280-w)//2+w,38+(180-h)//2+h));mean=ImageStat.Stat(ImageChops.difference(ref,out)).mean
 print(im.size,'mean absolute RGB error',mean);assert sum(mean)/3<18
 '''
-  subprocess.run(['/usr/bin/python3','-c',compare,str(source),str(dest)],check=True)
+  subprocess.run([sys.executable,'-c',compare,str(source),str(dest)],check=True)
 print('PASS actual gallery renderer + pinned JPEGDEC with ASan/UBSan adapter and ASan codec: SD short reads/failure, OOM/fallback, bounded reuse/cleanup, 3MP/VGA/HD/odd/portrait/tiny geometry, channel order and image agreement')
 
 # Directly fault the actual block mapper, independent of the vendor decoder.
 text=(F/'src/hal/hal_photo_preview.cpp').read_text()
-start=text.index('struct Sink {');end=text.index('\n}\n}\nvoid PhotoPreview::close()',start)+2
+start=text.index('struct Sink {');end=text.index('void PhotoPreview::close()',start)
+block=text[start:end];block=block[:block.rfind('}')]  # Exclude the anonymous namespace, irrespective of formatting.
 with tempfile.TemporaryDirectory(prefix='photo-block-bounds-') as td:
  p=Path(td);source=p/'bounds.cpp'
  source.write_text(r'''#include <stdint.h>
@@ -88,7 +89,7 @@ with tempfile.TemporaryDirectory(prefix='photo-block-bounds-') as td:
 #define MAX_BUFFERED_PIXELS 2048
 namespace core{namespace watchdog{void feed(){}}}
 struct JPEGDRAW{void* pUser;int x,y,iWidthUsed,iHeight,iWidth;uint16_t* pPixels;};
-'''+text[start:end]+r'''
+'''+block+r'''
 int main(){std::vector<uint16_t> output(240*180+2,0xbeef),input(272*4,0x1234);
  Sink s{output.data()+1,256,192,240,180,0,true};assert(!paint(nullptr));
  JPEGDRAW b{&s,0,0,256,4,272,input.data()};assert(paint(&b)&&s.valid&&s.written>0); // padded stride

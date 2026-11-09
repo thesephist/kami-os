@@ -48,3 +48,14 @@ Reviewed app events, sensor/frame ownership, preview callbacks, capture buffers,
 - `include/core/cine_frame.h`: sensor JPEG validation. `include/core/cine_shutter.h`: bounded shutter math.
 - `src/hal/hal_camera.cpp`: sensor register transaction/readback/rollback and physical exposure controls.
 - `src/core/cine_tone.cpp`: selected ISP gamma seed plus historical RAW experiments; historical software looks are not the selected path.
+
+## Fork maintenance pass — November 9, 2026
+
+The managed source is now `thesephist/kami-os`, with the original Git history retained. Tag `cine-baseline-c0-s1-b0-20261109` preserves the device-tested state before this pass; use `git diff -w cine-baseline-c0-s1-b0-20261109..main` to review the cleanup with whitespace ignored.
+
+- Removed the unreachable paired/neutral comparison capture branches, unused WB override, look/color cycling methods without callers, unused preview accessors/state, a duplicate wheel-value formatter, and an ignored UI argument. Reachable photo paths, JSON field names/values, UI, and USB commands retain their behavior.
+- Replaced positional ISP numeric/boolean options with `IspConfig`, `GammaCurve`, and `ColorMatrix`. The matrix type makes the old fitted-matrix/vendor-saturation conflict unrepresentable. Named internal modes distinguish native ISP JPEG, stock diagnostics, and binned/native RAW.
+- Kept the RAW/ISP/resize benchmark tools because they remain reachable USB experiments. Filmic and fitted-matrix diagnostics remain explicitly separate from the selected sRGB/vendor+1 baseline. Removing those tools would change the experiment interface.
+- Formatted only fork-added C++ files, excluding the copied JPEG codec. Upstream source outside our additions was not reformatted. Portable sanitizer fixtures and a focused CI runner now live in `tools/`; they need no retained personal photos or scratch paths.
+
+The selected image pipeline remains **C+0 S+1 · B0**, Sunny by default, native 2048×1536 JPEG, with the same shutter/WB controls and transient blue overlay.

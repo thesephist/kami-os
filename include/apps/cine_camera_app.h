@@ -1,7 +1,9 @@
 #pragma once
 #include "app.h"
 class Print;
-namespace apps { namespace cine_camera {
+namespace apps {
+namespace cine_camera {
 extern App app;
-bool handleSerialCommand(const char* line,Print& output);
-} }
+bool handleSerialCommand(const char *line, Print &output);
+} // namespace cine_camera
+} // namespace apps
