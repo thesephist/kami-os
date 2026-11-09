@@ -104,3 +104,15 @@ Local hardware evidence is retained in the scratch workspace at `.origami/artifa
 - The 18-state design PNG was rendered from the current viewfinder raster, Instrument font, app Scene builder and list styling using the supplied photo; it includes a real Home capture. Source-rendered menus omit variable system chrome. The optional Preparing state, four WB presets, settings browse/edit, capture/saved/failure and camera-error recovery are diagrammed. Private photo and rendered PNGs stay outside Git; `tools/render_cine_flow.py` and its host fixture are reusable with `--image`, `--output` and optional `--home`.
 
 Local evidence: `.origami/artifacts/cine-polish-design-20261109/device-results.json`, `device.log`, `cine-camera-flows.png` and its JSON manifest. Installed binary: `.origami/artifacts/cine-polish-final-20261109.bin`.
+
+
+## Upstream v1.0.5 sync — November 9, 2026
+
+- Rebased the four published fork commits onto upstream `cf3d1ce8ecfd7d4e4c63c52c9e25358dcdc52637`, which contains v1.0.5 (`c71e3d3`) and the legacy Staging recovery fix. Rebase completed without conflicts; `git range-diff` reports all four patches identical. Checkpoint `pre-upstream-sync-20261109` retains the previous published head (`d240277`).
+- Upstream changes Public OTA access so signed updates need no enrollment key; Private/Staging still require developer authorization. It also corrects legacy recovery manifest versions and their preparation workflow. No camera/gallery or SDK-pin changes were introduced upstream.
+- All 39 fork runtime source files under `src/`, `include/` and `scripts/` match the checkpoint byte-for-byte. The only runtime differences from that checkpoint are upstream's OTA client/header and the v1.0.5 build version. Current README/review provenance and the fork formatter baseline now identify the new upstream.
+- All 20 fork checks passed on the rebased tree. Upstream Public access, authorization policy, resumed downloads, channel/version selection and actual Arduino boot-health checks passed; all 24 publishing/channel/recovery unit tests passed, including the new legacy bridge cases.
+- Full production build, ESP32-S3 image parsing, application-slot size bound, and reviewed SDK archive/TLS linkage checks passed. The custom v1.0.5 application image and evidence remain in the private scratch artifacts, not in Git.
+- This pass updates and validates source only. The scratch device continues running the previously installed v1.0.4-based polish build; no USB flash or OTA publication was performed. Previous hardware measurements and the design PNG remain associated with their recorded builds.
+
+Evidence: scratch `.origami/artifacts/cine-upstream-sync-20261109/source-equivalence.json`, `validation.json`, `image-info.log`, `sdk-review.log`; build artifact `.origami/artifacts/cine-upstream-v1.0.5-20261109.bin`.

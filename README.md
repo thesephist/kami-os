@@ -1,4 +1,4 @@
-> **thesephist/kami-os fork.** Based on upstream `fbc6556` (v1.0.4). Adds Cine camera, Photo Printer, and a faster newest-first Photos gallery with wraparound. Home B opens Cine; the built-in Camera remains available in the application selector.
+> **thesephist/kami-os fork.** Based on upstream `cf3d1ce` (v1.0.5 + legacy recovery fix). Adds Cine camera, Photo Printer, and a faster newest-first Photos gallery with wraparound. Home B opens Cine; the built-in Camera remains available in the application selector.
 >
 > Cine defaults to Sunny WB and **C+0 S+1 · B0**: the sensor sRGB approximation, exact vendor +1 saturation matrix, and native 3MP JPEG saves. See [stock/Cine differences](docs/cine-camera-review.md) and [validation](docs/cine-camera-validation.md).
 
@@ -16,7 +16,7 @@ python3 tools/run_fork_checks.py --sdk
 
 Host checks require Python 3 and a C++ compiler with AddressSanitizer/UndefinedBehaviorSanitizer. They use generated fixtures, not private photos, a connected device, or scratch directories. The SDK check additionally uses the pinned JPEGDEC source downloaded by the build and Pillow (`python3 -m pip install -r tools/requirements-test.txt`, in your Python environment). CI builds the production target and runs these checks. To format only added C++ files, install `clang-format==18.1.8` and run `python3 tools/format_fork.py` (or `--check`).
 
-`main` tracks this fork's `origin/main`; `upstream` is the original source repository. Tag `cine-baseline-c0-s1-b0-20261109` preserves the tested firmware before the cleanup pass. Useful USB RAW/ISP/resize diagnostics remain available for experimentation; the unreachable old paired-capture path and UI-only remnants were removed. Printer credentials and Wi-Fi settings are provisioned on-device, never in Git.
+`main` tracks this fork's `origin/main`; `upstream` is the original source repository. Tag `cine-baseline-c0-s1-b0-20261109` preserves the tested firmware before the cleanup pass. Tag `pre-upstream-sync-20261109` preserves the published v1.0.4-based fork before rebasing onto upstream v1.0.5. Useful USB RAW/ISP/resize diagnostics remain available for experimentation; the unreachable old paired-capture path and UI-only remnants were removed. Printer credentials and Wi-Fi settings are provisioned on-device, never in Git.
 
 ---
 

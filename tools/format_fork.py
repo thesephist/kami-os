@@ -4,7 +4,7 @@ import argparse
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "fbc6556389082f85b1900da6002cc9527402bf81"
+BASE = "cf3d1ce8ecfd7d4e4c63c52c9e25358dcdc52637"
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--check", action="store_true")
 parser.add_argument("--formatter", default="clang-format", help="clang-format 18.1.8 executable")

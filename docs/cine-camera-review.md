@@ -1,6 +1,6 @@
 # Stock Camera vs Cine camera
 
-Scope: OV3660 scratch hardware, upstream `fbc6556389082f85b1900da6002cc9527402bf81`, and the selected **Cine** mode. Stock means the separate built-in Camera app with factory Default settings unless stated otherwise. Stock's saved settings can change its behavior.
+Scope: OV3660 scratch hardware, upstream `cf3d1ce8ecfd7d4e4c63c52c9e25358dcdc52637`, and the selected **Cine** mode. Stock means the separate built-in Camera app with factory Default settings unless stated otherwise. Stock's saved settings can change its behavior.
 
 ## Image pipeline and controls
 
@@ -61,3 +61,5 @@ The managed source is now `thesephist/kami-os`, with the original Git history re
 The selected image pipeline remains **C+0 S+1 · B0**, Sunny by default, native 2048×1536 JPEG, with the same shutter/WB controls and transient blue overlay.
 
 Home B opens Cine camera; the original Camera remains in the main application selector. Opening/error screens use the accurate “A: back” hint.
+
+Upstream sync: rebased onto v1.0.5 plus the legacy Staging recovery fix (`cf3d1ce`). Upstream changed OTA access/recovery and release tooling; all camera, gallery, printer and Home-shortcut source files match the pre-rebase fork exactly. Earlier hardware measurements in the validation log describe their named builds.
