@@ -81,3 +81,15 @@ Report: `.origami/artifacts/cine-subtle-overlay-20261109/index.html`; hardware: 
 - These checks validate configuration and functionality. The archived RAW grid approximates the sensor pipeline; it is not a bit-exact guarantee of final photographic appearance. This run does not retune exposure or judge quality from the current scene.
 
 Evidence: `.origami/artifacts/cine-saturation-plus1-20261109/device-results.json`; binary `.origami/artifacts/cine-saturation-plus1-20261109.bin`. Earlier handoff bundles remain historical snapshots.
+
+
+## Managed-fork cleanup — November 9, 2026
+
+- Pre-cleanup snapshot: `cine-baseline-c0-s1-b0-20261109` (`d312307`). Cleanup: `912036a`. The original upstream history is retained. Local checkout: `/home/thesephist/src/kami-os`; GitHub: `https://github.com/thesephist/kami-os`.
+- All 18 focused checks passed, including portable ASan/UBSan Cine fixtures, actual HAL ISP/shutter transactions with injected failures, preview/gear/fade rendering, DMA isolation, shared camera reservation/frame-loan guards, stock still capture, Photos navigation/catalog and pinned real JPEGDEC gallery rendering. The new runner is `python3 tools/run_fork_checks.py --sdk`; its SDK fixture dependency is declared in `tools/requirements-test.txt`.
+- The initial inherited session mocks omitted our HAL additions, and the gallery block test depended on whitespace around namespace braces. Those fixtures were repaired and the affected checks passed. Checks earlier in the run were not rerun after test-only changes.
+- Thirteen files changed only for readability exactly equal the pre-cleanup source after the pinned formatter, including printer logic, RAW tone math and the gallery renderer. Whole-upstream formatting was excluded. All newly tracked source/tests passed the credential scan.
+- Full production build passed. Application-only installation on scratch `44:B1:76:C6:14:40` verified the previous recovery image, new flash, protected metadata and boot; no panic observed. The daily driver was excluded.
+- Hardware saves passed at native 2048×1536 after startup, shutter adjustment and WB adjustment. The selected sensor gamma, CMX and control flags read back exactly the same as before cleanup. JSON schema and stable image-control fields match the prior baseline; timings, exposure and paths naturally vary by capture. Reopen restores Sunny/shutter mode with the wheel overlay hidden. No photographic retuning or performance claim is made for this pass.
+
+Local hardware evidence is retained in the scratch workspace at `.origami/artifacts/cine-quality-20261109/`, including `device-results.json` and `baseline-equivalence.json`; it contains no new public photo archive. Firmware artifact: `.origami/artifacts/cine-quality-20261109.bin`. CI is configured to build and run the fork checks; local verification does not assert a remote CI result.
