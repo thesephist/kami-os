@@ -56,7 +56,10 @@ static void renderBitmap(TFT_eSPI& c, const Node& n) {
     }
 }
 int main(int argc,char** argv){assert(argc==3);std::vector<uint16_t> source(224*168);FILE* f=fopen(argv[1],"rb");assert(f&&fread(source.data(),2,source.size(),f)==source.size());fclose(f);
- core::cine::WheelControl control;assert(!control.whiteBalance()&&!control.visible());control.show(100);assert(!control.expire(1299)&&control.visible());assert(control.expire(1300)&&!control.visible());control.toggle(2000);assert(control.whiteBalance()&&control.visible());control.toggle(2100);assert(!control.whiteBalance());control.show(0xffffff00u);assert(!control.expire(uint32_t(0xffffff00u+1199)));assert(control.expire(uint32_t(0xffffff00u+1200)));control.reset();assert(!control.whiteBalance()&&!control.visible());
+ core::cine::WheelControl control;assert(!control.whiteBalance()&&!control.visible()&&!control.shown(0));
+ control.show(100);assert(control.shown(100)&&control.shown(2099)&&!control.shown(2100));assert(!control.expire(2099)&&control.visible());assert(control.expire(2100)&&!control.visible());
+ control.toggle(3000);assert(control.whiteBalance()&&control.shown(3000));control.toggle(3100);assert(!control.whiteBalance());
+ control.show(0xffffff00u);assert(control.shown(uint32_t(0xffffff00u+1999)));assert(!control.shown(uint32_t(0xffffff00u+2000)));assert(control.expire(uint32_t(0xffffff00u+2000)));control.reset();assert(!control.whiteBalance()&&!control.visible());
  Canvas gear;ui::cine_view::settingsIcon(gear);int minX=280,maxX=0,minY=240,maxY=0;for(int y=0;y<50;++y)for(int x=0;x<80;++x)if(gear.pixels[y*280+x]){minX=std::min(minX,x);maxX=std::max(maxX,x);minY=std::min(minY,y);maxY=std::max(maxY,y);}assert(maxX-minX+1==20&&maxY-minY+1==20);
  static_assert(sizeof(ui::cine_view::settingsMask)==60,"row-aligned20x20 scene bitmap");
  Canvas standard;Node icon{ui::cine_view::settingsMask,20,20,{18,14,20,20}};renderBitmap(standard,icon);assert(standard.pixels==gear.pixels);
@@ -65,15 +68,15 @@ int main(int argc,char** argv){assert(argc==3);std::vector<uint16_t> source(224*
  auto gearBit=[](int x,int y){return (ui::cine_view::settingsMask[y*3+x/8]>>(7-(x&7)))&1;};
  for(int y=0;y<20;++y)for(int x=0;x<20;++x)assert(gearBit(x,y)==gearBit(19-y,x));
  assert(gearBit(0,9)&&gearBit(19,9)&&gearBit(9,0)&&gearBit(9,19)&&!gearBit(9,9));
- control.show(100);assert(control.opacity(1100)==255&&control.opacity(1200)==127&&control.opacity(1299)==1&&control.opacity(1300)==0);control.show(0xffffff00u);assert(control.opacity(uint32_t(0xffffff00u+1100))==127);assert(control.expire(uint32_t(0xffffff00u+1200))&&!control.whiteBalance());
+ control.show(100);control.show(1900);assert(control.shown(3899)&&!control.shown(3900));control.toggle(4000);assert(control.whiteBalance());assert(control.expire(6000)&&control.whiteBalance());control.reset();
  Canvas backing;std::fill(backing.pixels.begin(),backing.pixels.end(),0xffff);ui::cine_view::backdrop(backing,140,43,126,28,128);assert(backing.at(200,56)==0x7bef&&backing.at(140,43)==0xffff&&backing.at(145,43)==0x7bef);
  auto untouched=backing.pixels;ui::cine_view::backdrop(backing,-1,0,20,28,128);ui::cine_view::backdrop(backing,2147483647,0,20,28,128);ui::cine_view::backdrop(backing,0,2147483647,20,28,128);ui::cine_view::backdrop(backing,0,0,1,28,128);ui::cine_view::backdrop(backing,0,0,20,2147483647,128);assert(backing.pixels==untouched);
- for(bool wb:{false,true}){Canvas selected;ui::cine_view::chrome(selected,"Cloudy","1/1000",0,wb,255);unsigned ss=0,whiteBalance=0;for(int y=43;y<103;++y)for(int x=134;x<268;++x)if(selected.at(x,y)==kUiEdit){if(y<73)++ss;else ++whiteBalance;}assert(wb?(whiteBalance>0&&ss==0):(ss>0&&whiteBalance==0));}
+ for(bool wb:{false,true}){Canvas selected;ui::cine_view::chrome(selected,"Cloudy","1/1000",0,wb,true);unsigned ss=0,whiteBalance=0;for(int y=43;y<103;++y)for(int x=134;x<268;++x)if(selected.at(x,y)==kUiEdit){if(y<73)++ss;else ++whiteBalance;}assert(wb?(whiteBalance>0&&ss==0):(ss>0&&whiteBalance==0));}
 
- for(unsigned state=0;state<5;++state){Canvas canvas;ui::cine_view::image(canvas,source.data(),224,168);const auto before=canvas.pixels;ui::cine_view::chrome(canvas,state==2||state==3?"Cloudy":"Sunny","1/1000",state==4?5000:0,state==2||state==3,state==1||state==2?255:state==3?127:0);if(state==0||state==4)for(int y=43;y<103;++y)for(int x=134;x<268;++x)assert(canvas.pixels[y*280+x]==before[y*280+x]);for(int y=225;y<240;++y)for(int x=60;x<241;++x)assert(canvas.pixels[y*280+x]==before[y*280+x]);char path[1024];snprintf(path,sizeof(path),"%s/subtle-state-%u.ppm",argv[2],state);canvas.save(path);}
+ for(unsigned state=0;state<5;++state){Canvas canvas;ui::cine_view::image(canvas,source.data(),224,168);const auto before=canvas.pixels;ui::cine_view::chrome(canvas,state==2||state==3?"Cloudy":"Sunny","1/1000",state==4?5000:0,state==2||state==3,state==1||state==2||state==3);if(state==0||state==4)for(int y=43;y<103;++y)for(int x=134;x<268;++x)assert(canvas.pixels[y*280+x]==before[y*280+x]);for(int y=225;y<240;++y)for(int x=60;x<241;++x)assert(canvas.pixels[y*280+x]==before[y*280+x]);char path[1024];snprintf(path,sizeof(path),"%s/subtle-state-%u.ppm",argv[2],state);canvas.save(path);}
  Canvas reference;ui::cine_view::image(reference,source.data(),224,168);camera_photographer::overlays(reference,0);reference.fillRect(52,196,180,20,0);ui::pixel_text::text(reference,"B: PHOTO / HOLD: VIDEO",56,202,1,0xffff);char path[1024];snprintf(path,sizeof(path),"%s/stock-overlay.ppm",argv[2]);reference.save(path);
 }
 ''')
  subprocess.run(['c++','-std=c++17','-O1','-fsanitize=address,undefined','-fno-sanitize-recover=all','-DORIGAMI_INSTRUMENT_FONT','-I'+str(p),'-I'+str(R/'include'),'-I'+str(R/'lib/TB_TFT_eSPI'),str(p/'render.cpp'),'-o',str(p/'render')],check=True)
  subprocess.run([str(p/'render'),str(O/'review-input.rgb565'),str(O)],check=True)
-print('PASS actual Cine view and Instrument font: gear row alignment, safe alpha boxes, blue selection, hidden controls, timer rollover; ASan/UBSan')
+print('PASS actual Cine view and Instrument font: gear row alignment, safe alpha boxes, blue selection, hidden controls, 2s snap timing and rollover; ASan/UBSan')

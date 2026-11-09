@@ -14,13 +14,8 @@ public:
   }
   bool whiteBalance() const { return whiteBalance_; }
   bool visible() const { return visible_; }
-  // Hold1s, then fade over200ms. The mode survives after its overlay disappears.
-  unsigned opacity(uint32_t now) const {
-    if (!visible_)
-      return 0;
-    const uint32_t age = uint32_t(now - changedAt_);
-    return age >= 1200 ? 0 : age <= 1000 ? 255 : unsigned((1200 - age) * 255 / 200);
-  }
+  // Snap on for two seconds; the selected mode survives after dismissal.
+  bool shown(uint32_t now) const { return visible_ && uint32_t(now - changedAt_) < 2000u; }
   void show(uint32_t now) {
     visible_ = true;
     changedAt_ = now;
@@ -30,7 +25,7 @@ public:
     show(now);
   }
   bool expire(uint32_t now) {
-    if (visible_ && uint32_t(now - changedAt_) >= 1200u) {
+    if (visible_ && uint32_t(now - changedAt_) >= 2000u) {
       visible_ = false;
       return true;
     }

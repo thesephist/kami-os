@@ -66,23 +66,6 @@ template <class C> void backdrop(C &c, int x, int y, int w, int h, unsigned alph
     c.pushImage(x + pad, y + yy, count, 1, row);
   }
 }
-template <class C> struct FadedText {
-  C &base;
-  unsigned alpha;
-  uint16_t at(int x, int y) const { return base.at(x, y); }
-  uint16_t readPixel(int x, int y) const { return base.at(x, y); }
-  void fillRect(int x, int y, int w, int h, uint16_t ink) {
-    if (alpha == 255) {
-      base.fillRect(x, y, w, h, ink);
-      return;
-    }
-    if (!alpha)
-      return;
-    for (int yy = 0; yy < h; ++yy)
-      for (int xx = 0; xx < w; ++xx)
-        base.fillRect(x + xx, y + yy, 1, 1, composite(ink, base.at(x + xx, y + yy), alpha));
-  }
-};
 template <class C> void regular(C &c, const char *text, int x, int y, uint16_t ink = 0xffff) {
 #ifdef ORIGAMI_INSTRUMENT_FONT
   instrument_text::text(c, text, x, y, instrument::fonts[1], ink);
@@ -99,7 +82,7 @@ inline int regularWidth(const char *text) {
 }
 template <class C>
 void chrome(C &c, const char *wb, const char *shutter, unsigned phase, bool wbWheel = false,
-            unsigned opacity = 0) {
+            bool showControls = false) {
   const unsigned stage = phase / 1000;
   const char *caption = stage == 1 || stage == 2   ? "CAPTURE"
                         : stage == 3 || stage == 4 ? "SAVING"
@@ -112,10 +95,8 @@ void chrome(C &c, const char *wb, const char *shutter, unsigned phase, bool wbWh
   settingsIcon(c);
   if (!stage)
     pixel_text::text(c, caption, 56, 202, 1, 0xffff);
-  if (!opacity)
+  if (!showControls)
     return;
-  if (opacity > 255)
-    opacity = 255;
   int valueWidth = regularWidth(wb);
   const int sw = regularWidth(shutter);
   if (sw > valueWidth)
@@ -126,14 +107,13 @@ void chrome(C &c, const char *wb, const char *shutter, unsigned phase, bool wbWh
   if (width > 126)
     width = 126;
   const int x = 268 - width;
-  // Separate pills hug the rows, with a50%-opaque black backing at full opacity.
-  backdrop(c, x, 43, width, 28, (opacity * 128 + 127) / 255);
-  backdrop(c, x, 73, width, 28, (opacity * 128 + 127) / 255);
-  FadedText<C> text{c, opacity};
-  pixel_text::text(text, "SS", x + 8, 52, 1, wbWheel ? 0xffff : kUiEdit);
-  pixel_text::text(text, "WB", x + 8, 82, 1, wbWheel ? kUiEdit : 0xffff);
-  regular(text, shutter, x + 38, 46, wbWheel ? 0xffff : kUiEdit);
-  regular(text, wb, x + 38, 76, wbWheel ? kUiEdit : 0xffff);
+  // Fixed 50%-opaque pills snap on and off with the controls.
+  backdrop(c, x, 43, width, 28, 128);
+  backdrop(c, x, 73, width, 28, 128);
+  pixel_text::text(c, "SS", x + 8, 52, 1, wbWheel ? 0xffff : kUiEdit);
+  pixel_text::text(c, "WB", x + 8, 82, 1, wbWheel ? kUiEdit : 0xffff);
+  regular(c, shutter, x + 38, 46, wbWheel ? 0xffff : kUiEdit);
+  regular(c, wb, x + 38, 76, wbWheel ? kUiEdit : 0xffff);
 }
 } // namespace cine_view
 } // namespace ui

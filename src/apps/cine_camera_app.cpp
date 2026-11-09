@@ -2,6 +2,7 @@
 #include "services/cine_camera.h"
 #include "core/cine_controls.h"
 #include "services/photo_print.h"
+#include "services/vibration.h"
 #include "hal/hal_display.h"
 #include "nav_handler.h"
 #include "scene/screen.h"
@@ -157,7 +158,7 @@ void build(ui::scene::Scene &view, int16_t w, int16_t h) {
     if (gear)
       gear->bitmapTransparent = true;
     view.addLabel("cine.controls", {52, 196, 120, 20}, "B: PHOTO", 0xffff, 0, 1);
-    if (wheel.opacity(millis())) {
+    if (wheel.shown(millis())) {
       const uint16_t ss = wheel.whiteBalance() ? 0xffff : kUiEdit,
                      wb = wheel.whiteBalance() ? kUiEdit : 0xffff;
       char shutter[20];
@@ -188,7 +189,7 @@ void build(ui::scene::Scene &view, int16_t w, int16_t h) {
   view.addLabel("cine.status", {8, 96, (int16_t)(w - 16), 50},
                 current == View::Opening ? "Preparing camera..." : session.status().message, fg, bg,
                 1, ui::scene::TextAlign::MiddleCenter);
-  view.addLabel("cine.controls", {0, 212, w, 18}, "A: return to settings", muted, bg, 1,
+  view.addLabel("cine.controls", {0, 212, w, 18}, "A: back", muted, bg, 1,
                 ui::scene::TextAlign::MiddleCenter);
 }
 struct PreviewCanvas {
@@ -217,7 +218,7 @@ void draw(TFT_eSprite &canvas) {
     ui::cine_view::chrome(target, cine::Session::whiteBalanceName(session.whiteBalance()), shutter,
                           feedbackStage * 1000 +
                               (millis() - feedbackAt < 999 ? millis() - feedbackAt : 999),
-                          wheel.whiteBalance(), wheel.opacity(millis()));
+                          wheel.whiteBalance(), wheel.shown(millis()));
     session.previewDrawn();
   } else
     view.render(canvas);
@@ -282,6 +283,7 @@ void input(hal::input::InputEvent e) {
   if (e.type == ET::ButtonB_Tap)
     snap();
   else if (ui::nav::isEnterTap(e)) {
+    services::vibration::navigationFeedback(services::vibration::Cue::Select);
     wheel.toggle(millis());
     invalidate();
   } else if (e.type == ET::Scroll) {
