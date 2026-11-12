@@ -36,6 +36,7 @@ checks = [
 ]
 if args.sdk:
     checks.append("test_photo_preview")
+    checks.append("test_cine_jpeg_speed")
 for check in checks:
     print(f"Running {check}", flush=True)
     subprocess.run(
