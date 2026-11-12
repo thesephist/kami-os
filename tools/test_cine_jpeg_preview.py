@@ -20,6 +20,7 @@ int main(){
  std::fill(dst.begin(),dst.end(),0xbeef);
  for(unsigned y=0;y<h;y+=8)for(unsigned x=0;x<w;x+=8){std::vector<uint16_t> tile(8*10,0xffff);for(unsigned j=0;j<8;++j)for(unsigned i=0;i<8;++i){unsigned r=(x+i)%256,g=(y+j)%256;tile[j*10+i]=((r>>3)<<11|(g>>2)<<5);}JPEGDRAW b{&c,int(x),int(y),8,8,10,tile.data()};assert(writeBlock565(&b));}
  assert(dst.front()==0xbeef&&dst.back()==0xbeef);for(unsigned y=0;y<168;++y)for(unsigned x=0;x<224;++x){unsigned r=(x*w/224)%256,g=(y*h/168)%256;assert(dst[1+y*224+x]==((r>>3)<<11|(g>>2)<<5));}
+ {bool stop=true;c.shouldAbort=[](void* p){return *static_cast<bool*>(p);};c.context=&stop;JPEGDRAW b{&c,0,0,8,8,8,dst.data()};assert(!writeBlock565(&b)&&c.interrupted);assert(!writeJpeg(&c,0,0,8,8,nullptr));c.shouldAbort=nullptr;c.context=nullptr;c.interrupted=false;}
  assert(!writeBlock565(nullptr));JPEGDRAW bad{&c,INT_MAX,INT_MAX,INT_MAX,INT_MAX,INT_MAX,dst.data()};assert(!writeBlock565(&bad));bad={&c,0,0,8,8,INT_MAX,dst.data()};assert(!writeBlock565(&bad));bad={&c,0,0,256,192,256,dst.data()};assert(!writeBlock565(&bad));assert(!writeJpeg(nullptr,0,0,8,8,nullptr));assert(!readJpeg(nullptr,0,nullptr,4));
  JPEGDRAW invalid{&c,-1,0,8,8,10,nullptr};assert(!writeBlock565(&invalid));
  uint8_t bytes[3]={};assert(!writeJpeg(&c,w,0,1,1,bytes));

@@ -4,6 +4,7 @@
 #include "services/photo_print.h"
 #include "services/vibration.h"
 #include "hal/hal_display.h"
+#include "hal/hal_input.h"
 #include "nav_handler.h"
 #include "scene/screen.h"
 #include "ui/scene.h"
@@ -40,6 +41,8 @@ bool parseInteger(const char *text, long minimum, long maximum, long &value) {
   return !errno && end && !*end && value >= minimum && value <= maximum;
 }
 bool active = false, dirty = true, pattern = false, saveRaw = false;
+bool responsivePreview = true;
+uint32_t lastInputSample = 0;
 // Keep the gap short between reduced-IDCT previews and input handling.
 uint32_t requestedAt = 0, lastPreview = 0;
 constexpr uint16_t bg = 0xFFFF, fg = 0x0000, muted = 0x632C;
@@ -64,6 +67,7 @@ void begin();
 void draw(TFT_eSprite &);
 void activate() {
   active = true;
+  responsivePreview = true;
   requestedMode = cine::Mode::Isp3Mp;
   pattern = saveRaw = false;
   feedbackStage = 0;
@@ -97,6 +101,15 @@ void snap() {
   draw(hal::display::canvas());
   hal::display::flush();
 }
+bool previewShouldAbort(void *) {
+  // Match stock Camera: sample/enqueue only, never dispatch with a frame loan.
+  const uint32_t now = millis();
+  if (uint32_t(now - lastInputSample) >= 8u) {
+    lastInputSample = now;
+    hal::input::service(now);
+  }
+  return hal::input::buttonADown() || hal::input::buttonBDown() || hal::input::buttonCDown();
+}
 void tick(uint32_t) {
   const uint32_t now = millis();
   if (wheel.expire(now))
@@ -117,7 +130,7 @@ void tick(uint32_t) {
       invalidate();
     }
   } else if (current == View::Preview && uint32_t(now - lastPreview) >= 1u) {
-    if (session.preview())
+    if (session.preview(responsivePreview ? previewShouldAbort : nullptr))
       invalidate();
     lastPreview = millis();
   }
@@ -206,6 +219,8 @@ struct PreviewCanvas {
     surface.setSwapBytes(true);
     surface.pushImage(x, y, w, h, pixels);
     surface.setSwapBytes(swap);
+    if (responsivePreview)
+      (void)previewShouldAbort(nullptr);
   }
 };
 void draw(TFT_eSprite &canvas) {
@@ -478,6 +493,16 @@ bool handleSerialCommand(const char *line, Print &output) {
     if (parseInteger(line + 14, -6, 6, target))
       session.adjustExposure(int(target) - session.parameters().exposureThirds);
     output.printf("[cine] bench exposure_thirds=%d\n", session.parameters().exposureThirds);
+    return true;
+  }
+  if (!strncmp(line, "cine bench input ", 17)) {
+    long enabled = 0;
+    if (!parseInteger(line + 17, 0, 1, enabled)) {
+      output.println("[cine-input] use bench input 0|1");
+      return true;
+    }
+    responsivePreview = enabled != 0;
+    output.printf("[cine-input] responsive=%u\n", responsivePreview);
     return true;
   }
   if (!strncmp(line, "cine bench auto ", 16)) {

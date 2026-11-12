@@ -56,7 +56,7 @@ namespace services{namespace cine_camera{
  bool Session::refreshExposure(){if(!autoExposure())return false;hal::camera::ShutterInfo live;if(!hal::camera::readJpegShutter(&live)||!live.valid)return false;shutter_=live;return true;}
  bool Session::resumeAutoExposure(){return configureBaseline(16667,16,false,true);}
  void Session::releaseIspPreview(){}
- bool failDecode=false;bool Session::renderIspPreview(const hal::camera::CameraFrame&){return !failDecode;}
+ bool failDecode=false;bool Session::renderIspPreview(const hal::camera::CameraFrame&,bool(*abort)(void*),void* ctx){if(abort&&abort(ctx)){status_.previewInterrupted=true;return false;}return !failDecode;}
 }}
 bool failTelemetry=false;int allocations=0,failAllocation=-1;bool reserved=false,stopBlocked=false,failRead=false,nullFrame=false;Log Serial;int64_t clockUs=0;bool ready=true,rawMode=false,running=false,held=false,failWrite=false,allowRaw=true;unsigned sequence=0,reads=0;bool detailMode=false,fullRawMode=false,checkFullPixels=false;core::cine::Parameters expectedParams;
 std::vector<uint8_t> raw(1024*768,100),jpg={255,216,1,2,255,217};std::map<std::string,std::vector<uint8_t>> files;
@@ -78,6 +78,9 @@ int main(){using namespace services::cine_camera;
  allowRaw=false;assert(!c.open(Mode::RawBinned)&&!running);allowRaw=true;
  assert(c.open(Mode::Stock)&&c.status().open&&!c.status().raw);assert(c.capture());assert(files.count(c.status().neutralPath));assert(c.status().cinePath[0]==0);c.close();assert(!running&&!held);
  assert(c.open(Mode::Isp3Mp)&&!c.status().raw&&c.whiteBalance()==1&&c.autoExposure()&&!c.shutter().manual);
+ {unsigned before=reads;unsigned calls=0;auto abort=[](void* p){return ++*static_cast<unsigned*>(p)>=1;};assert(!c.preview(abort,&calls)&&c.status().previewInterrupted&&reads==before&&!held);}
+ {unsigned calls=0;auto abort=[](void* p){return ++*static_cast<unsigned*>(p)>=2;};assert(!c.preview(abort,&calls)&&c.status().previewInterrupted&&!held);}
+ {unsigned calls=0;auto abort=[](void* p){return ++*static_cast<unsigned*>(p)>=3;};clockUs+=1000000;assert(!c.preview(abort,&calls)&&c.status().previewInterrupted&&!held);c.previewDrawn();assert(c.status().previewDrawAgeUs>=1000000);assert(c.preview()&&!c.status().previewInterrupted);}
  failTelemetry=true;assert(c.capture()&&c.shutter().valid&&c.autoExposure());{auto& bytes=files.at(c.status().metadataPath);std::string metadata(bytes.begin(),bytes.end());assert(metadata.find("\"sample_valid\":false")!=std::string::npos&&metadata.find("\"automatic\":true")!=std::string::npos);}
  c.adjustShutter(1);assert(c.autoExposure());failTelemetry=false;
  assert(c.capture()&&c.autoExposure());{auto& bytes=files.at(c.status().metadataPath);std::string metadata(bytes.begin(),bytes.end());assert(metadata.find("\"sample_valid\":true")!=std::string::npos&&metadata.find("live-after-frame")!=std::string::npos);}

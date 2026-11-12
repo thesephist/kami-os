@@ -250,9 +250,14 @@ bool Session::close(bool restoreUi) {
     camera_.restoreUi(camera::Session::Resume::DeferredWithInputRecovery);
   return true;
 }
-bool Session::preview() {
+bool Session::preview(bool (*shouldAbort)(void *), void *context) {
   if (!status_.open)
     return false;
+  status_.previewInterrupted = false;
+  if (shouldAbort && shouldAbort(context)) {
+    status_.previewInterrupted = true;
+    return false;
+  }
   hal::camera::CameraFrame frame{};
   if (frameHeld_) {
     camera_.returnFrame();
@@ -263,6 +268,11 @@ bool Session::preview() {
   if (!camera_.read(&frame))
     return false;
   status_.previewReadUs = uint32_t(esp_timer_get_time() - readStarted);
+  if (shouldAbort && shouldAbort(context)) {
+    camera_.returnFrame();
+    status_.previewInterrupted = true;
+    return false;
+  }
   if (shutterReadyUs_ && frame.dmaStartUs < shutterReadyUs_) {
     camera_.returnFrame();
     return false;
@@ -276,9 +286,10 @@ bool Session::preview() {
     if (ok) {
       width_ = frame.width;
       height_ = frame.height;
-      cachedFrameUs_ = frame.dmaStartUs;
       const uint64_t at = esp_timer_get_time();
-      ok = renderIspPreview(frame);
+      ok = renderIspPreview(frame, shouldAbort, context);
+      if (ok)
+        cachedFrameUs_ = frame.dmaStartUs;
       status_.previewUs = uint32_t(esp_timer_get_time() - at);
     }
   } else {
@@ -350,7 +361,7 @@ bool Session::preview() {
     status_.previewAgeUs = done >= cachedFrameUs_ ? uint32_t(done - cachedFrameUs_) : 0;
     status_.previewIntervalUs = lastPreviewDoneUs_ ? uint32_t(done - lastPreviewDoneUs_) : 0;
     lastPreviewDoneUs_ = done;
-  } else
+  } else if (!status_.previewInterrupted)
     snprintf(status_.message, sizeof(status_.message), "Unexpected sensor frame format");
   return ok;
 }

@@ -24,7 +24,14 @@ struct Decode {
   uint16_t *preview = nullptr;
   uint8_t *rgb = nullptr;
   unsigned width = 0, height = 0;
-  bool valid = false;
+  bool valid = false, interrupted = false;
+  bool (*shouldAbort)(void *) = nullptr;
+  void *context = nullptr;
+  bool abort() {
+    if (shouldAbort && shouldAbort(context))
+      interrupted = true;
+    return interrupted;
+  }
 };
 size_t readJpeg(void *arg, size_t index, uint8_t *data, size_t bytes) {
   if (!arg)
@@ -42,6 +49,8 @@ bool writeJpeg(void *arg, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_
   if (!arg)
     return false;
   auto &c = *static_cast<Decode *>(arg);
+  if (c.abort())
+    return false;
   core::watchdog::feed();
   if (!data) {
     if (!x && !y)
@@ -74,6 +83,8 @@ int writeBlock565(JPEGDRAW *block) {
   if (!block || !block->pUser || !block->pPixels)
     return 0;
   auto &c = *static_cast<Decode *>(block->pUser);
+  if (c.abort())
+    return 0;
   core::watchdog::feed();
   const int x = block->x, y = block->y, w = block->iWidthUsed, h = block->iHeight;
   if (!c.preview || !c.width || !c.height || x < 0 || y < 0 || w <= 0 || h <= 0 ||
@@ -124,7 +135,8 @@ void Session::releaseIspPreview() {
   heap_caps_free(previewWork_);
   previewWork_ = nullptr;
 }
-bool Session::renderIspPreview(const hal::camera::CameraFrame &frame) {
+bool Session::renderIspPreview(const hal::camera::CameraFrame &frame, bool (*shouldAbort)(void *),
+                               void *context) {
   const bool native = frame.width == 2048;
   if (!preview_ || !core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height,
                                           native ? 2048 : 640, native ? 1536 : 480))
@@ -136,6 +148,8 @@ bool Session::renderIspPreview(const hal::camera::CameraFrame &frame) {
     return false;
   Decode c{frame.buf, frame.len, previewWork_, nullptr, native ? 256u : 320u, native ? 192u : 240u,
            false};
+  c.shouldAbort = shouldAbort;
+  c.context = context;
   bool ok = false;
   if (referencePreview_)
     ok = esp_jpg_decode(frame.len, native ? JPG_SCALE_8X : JPG_SCALE_2X, readJpeg, writeJpeg, &c) ==
@@ -160,6 +174,9 @@ bool Session::renderIspPreview(const hal::camera::CameraFrame &frame) {
     }
     ispDecoder_->close();
   }
+  status_.previewInterrupted = c.interrupted;
+  // JPEGDEC treats a draw-callback stop as success; it is not a complete image.
+  ok = ok && !c.interrupted;
   // Never present a partially decoded frame, even if another UI action redraws.
   if (ok) {
     auto *completed = preview_;

@@ -23,7 +23,7 @@ struct Status {
   uint32_t startupUs = 0, startupPrepareUs = 0, startupInitUs = 0, startupAeUs = 0,
            startupIspUs = 0, startupPreviewUs = 0;
   bool startupAeStable = false;
-  bool open = false, raw = false, saved = false, zeroShutterLag = false;
+  bool open = false, raw = false, saved = false, zeroShutterLag = false, previewInterrupted = false;
   unsigned frames = 0;
   uint32_t sequence = 0;
   uint32_t previewUs = 0, previewReadUs = 0, previewAgeUs = 0, previewDrawAgeUs = 0,
@@ -43,7 +43,7 @@ public:
   // Keep the peripheral reservation across settings/mode changes. Release on exit.
   bool close(bool restoreUi = true);
   bool holdsResources() const { return camera_.backgroundHeld() || camera_.running(); }
-  bool preview();
+  bool preview(bool (*shouldAbort)(void *) = nullptr, void *context = nullptr);
   void previewDrawn(); // DMA-start age when the UI has composed the preview.
   void retainPreviewRaw(bool enabled) {
     retainPreviewRaw_ = enabled;
@@ -105,7 +105,8 @@ private:
                          bool automatic = false);
   void configure();
   void releaseIspPreview();
-  bool renderIspPreview(const hal::camera::CameraFrame &frame);
+  bool renderIspPreview(const hal::camera::CameraFrame &frame,
+                        bool (*shouldAbort)(void *) = nullptr, void *context = nullptr);
   bool renderRaw();
   bool saveRender(const char *path, bool reuse = false);
 };

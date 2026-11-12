@@ -1,3 +1,4 @@
+#include "hal/hal_input_cadence.h"
 #include "hal/hal_input.h"
 #include "core/rotary_decoder.h"
 #include <esp_heap_caps.h>
@@ -105,11 +106,23 @@ static void fireChord(uint32_t now) {
     enqueue(EventType::Chord_AB);
 }
 
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+static core::input::Cadence s_buttonCadence;
+void startButtonCadence() { s_buttonCadence.start(); }
+core::input::Cadence::Snapshot buttonCadence(bool stop) {
+    if (stop) s_buttonCadence.stop();
+    return s_buttonCadence.snapshot();
+}
+#endif
 void service(uint32_t nowMs) {
     encoderTraceService();
     // --- Read physical buttons (MCP23017 via hal::io) ---
     bool buttonA = false, buttonB = false, buttonC = false;
-    if (!hal::io::readButtonsSnapshot(&buttonA, &buttonB, &buttonC)) {
+    const bool validButtons = hal::io::readButtonsSnapshot(&buttonA, &buttonB, &buttonC);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+    if (s_buttonCadence.enabled()) s_buttonCadence.sample(micros(), validButtons);
+#endif
+    if (!validButtons) {
         s_powerGesture.suppress(); // Unknown input must not complete a power hold.
         // I2C read failed (bus contended or briefly wedged — see the 263 issue).
         // readButtonsSnapshot reports both buttons UP on failure; using that would
