@@ -156,3 +156,60 @@ Private evidence: `.local/lab/.origami/artifacts/cine-auto-exposure-20261111/` c
 - A B press/release through the sampled input handler saved a native 2048×1536 photo with valid metadata. An acknowledged wheel hold restored Auto without standby or a trailing click, and sampled A+B returned to Home. The camera was deinitialized and the device left at Home. These checks do not establish a physical tap failure rate or a fix for the separate intermittent camera-availability report.
 
 Private evidence: `.local/lab/.origami/artifacts/cine-input-responsiveness-20261111/` retains both firmware candidates, checksums, verified deployment records, the initial 8ms experiment and final 20ms device measurements. Photographs, device logs and firmware binaries remain outside Git.
+
+## Viewfinder latency investigation — November 11, 2026
+
+The installed input-responsive baseline was verified against the live selected
+flash slot before experimenting; the GitHub branch matched the local source.
+Cine's normal color/tone treatment already runs in the sensor ISP. Normal saves
+write its native 3MP JPEG directly, and preview performs reduced JPEG decoding,
+fitting and UI composition, without software color grading or re-encoding.
+Stock normally previews VGA, while Cine keeps the sensor at 2048×1536 to preserve
+fast native-resolution capture and consistent sensor settings.
+
+Two quiet-viewfinder windows per candidate used the same dark scene, Auto
+exposure 37,567µs, gain 4× and sensor frame period 74,942µs. Each timing window
+was followed by 12 distinct-frame samples. Values below are the two sample
+medians; input means come from successful physical expander snapshots.
+
+| Cine preview decoder | Decode/render | DMA-start → composed canvas | Preview interval | Mean input-read gap |
+| --- | ---: | ---: | ---: | ---: |
+| Existing JPEGDEC, `-Os` | 145.4 / 145.5ms | 242.3 / 242.4ms | 229.1 / 227.7ms | 23.1 / 23.2ms |
+| Espressif native scaler, 3MP → 256×192 | 236.5 / 236.7ms | 332.9 / 333.0ms | 374.4 / 374.6ms | 75.5 / 75.4ms |
+| JPEGDEC-only `-O3` | 231.2 / 233.8ms | 327.7 / 330.2ms | 374.6 / 374.7ms | 25.1 / 25.1ms |
+
+**Both candidates were rejected and their implementation changes reverted.**
+The native codec's whole-frame call also increased maximum button-read gaps
+from about 84ms to 232ms. O3 preserved the callback polling but slowed decoding.
+Its pinned-source overlay passed 12 exact host RGB565 comparisons at full,
+half, quarter and eighth scale across 3MP/VGA and 4:4:4/4:2:2/4:2:0 inputs, plus
+the full 23-check candidate suite. Pixel equivalence did not imply a speed win.
+The retained runtime is identical to the input-responsive baseline; no new
+buffers, tasks, decoder dependency or compiler override remains.
+
+These are scene-specific software timings, **not optical sensor-to-screen
+measurements**. DMA start does not identify optical exposure start, and Cine's
+canvas timestamp precedes panel transfer (roughly 32–49ms in these samples) and
+LCD scanout. Stock's observed roughly 147ms DMA-to-presentation measurement
+includes its transfer, so it cannot be directly compared with Cine's composed
+canvas column. The sensor modes also differ. Short-window polling data is not
+a measured physical tap failure rate.
+
+The native candidate passed a sampled shutter capture and Auto hold; its later
+pattern harness waited for startup after a command that only configures the
+pattern. The O3 harness completed both Auto timing windows, then rejected a
+normal quantized 99,999µs shutter because it incorrectly required exactly
+100,000µs. Neither harness result explains the repeatable decode regressions;
+the rejected candidates were not treated as fully accepted device releases.
+An existing-decoder hardware pattern was captured separately. No claim of
+optimized on-device pixel equivalence is made.
+
+Further experiments should separate decoding from acquisition/presentation,
+and measure whether preview/capture resolution switching earns its capture
+latency cost. Pipelining may improve cadence without reducing the age of an
+individual frame; buffering must be measured for freshness as well as FPS.
+The current 3MP preview's reduced decode is its largest measured CPU cost.
+
+Private evidence: `.local/lab/.origami/artifacts/cine-preview-latency-20261111/`
+retains baseline flash verification, exact candidate images and install records,
+both sets of timing samples, host pixel checks and the baseline hardware pattern.
