@@ -21,7 +21,6 @@ checks = [
     "test_cine_isp_experiment",
     "test_cine_shutter",
     "test_cine_decoder_ownership",
-    "test_cine_native_preview",
     "test_cine_jpeg_preview",
     "test_cine_subtle_overlay_view",
     "test_cine_interactions",

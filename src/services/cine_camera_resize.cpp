@@ -126,7 +126,6 @@ size_t encoded(void *arg, size_t index, const void *data, size_t bytes) {
 }
 } // namespace
 void Session::releaseIspPreview() {
-  releaseNativePreview();
   if (ispDecoder_) {
     ispDecoder_->close();
     ispDecoder_->~JPEGDEC();
@@ -147,19 +146,6 @@ bool Session::renderIspPreview(const hal::camera::CameraFrame &frame, bool (*sho
         heap_caps_malloc(previewWidth * previewHeight * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!previewWork_)
     return false;
-  if (native && nativePreview_ && !referencePreview_ && !nativeUnavailable_) {
-    if (renderNativePreview(frame, shouldAbort, context)) {
-      auto *completed = preview_;
-      preview_ = previewWork_;
-      previewWork_ = completed;
-      return true;
-    }
-    if (status_.previewInterrupted)
-      return false;
-    // A codec/allocation failure falls back once for the rest of this session.
-    releaseNativePreview();
-    nativeUnavailable_ = true;
-  }
   Decode c{frame.buf, frame.len, previewWork_, nullptr, native ? 256u : 320u, native ? 192u : 240u,
            false};
   c.shouldAbort = shouldAbort;

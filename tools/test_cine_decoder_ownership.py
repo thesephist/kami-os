@@ -33,8 +33,7 @@ class JPEGDEC{void* user=nullptr;int(*callback)(JPEGDRAW*)=nullptr;public:
  int decode(int,int,int){uint16_t pixels[2048];for(auto& v:pixels)v=0x1234;for(int y=0;y<192;y+=8){JPEGDRAW b{user,0,y,256,8,256,pixels};if(!callback(&b))return 1;if(behavior==3)return 0;}return 1;}
  void close(){}
 };
-int nativeOutcome=0,nativeCalls=0;
-class Session{public:static constexpr unsigned previewWidth=224,previewHeight=168;uint16_t *preview_=nullptr,*previewWork_=nullptr;JPEGDEC* ispDecoder_=nullptr;bool referencePreview_=false,nativePreview_=false,nativeUnavailable_=false;void releaseNativePreview(){}bool renderNativePreview(const hal::camera::CameraFrame&,bool(*)(void*),void*){++nativeCalls;if(nativeOutcome==2)status_.previewInterrupted=true;if(nativeOutcome==1)for(unsigned i=0;i<224*168;++i)previewWork_[i]=0x4321;return nativeOutcome==1;}struct {bool previewInterrupted=false;} status_;void releaseIspPreview();bool renderIspPreview(const hal::camera::CameraFrame&,bool(*)(void*)=nullptr,void* =nullptr);};
+class Session{public:static constexpr unsigned previewWidth=224,previewHeight=168;uint16_t *preview_=nullptr,*previewWork_=nullptr;JPEGDEC* ispDecoder_=nullptr;bool referencePreview_=false;struct {bool previewInterrupted=false;} status_;void releaseIspPreview();bool renderIspPreview(const hal::camera::CameraFrame&,bool(*)(void*)=nullptr,void* =nullptr);};
 int esp_jpg_decode(size_t,int,size_t(*)(void*,size_t,uint8_t*,size_t),bool(*write)(void*,uint16_t,uint16_t,uint16_t,uint16_t,uint8_t*),void* ctx){assert(write(ctx,0,0,256,192,nullptr));uint8_t pixels[256*8*3]={};assert(write(ctx,0,0,256,8,pixels));return -1;}
 '''+callbacks+methods+r'''
 int main(){uint8_t jpeg[]={255,216,255,217};hal::camera::CameraFrame f{jpeg,4,2048,1536};Session s;s.preview_=static_cast<uint16_t*>(heap_caps_malloc(224*168*2,3));for(unsigned i=0;i<224*168;++i)s.preview_[i]=0xbeef;
@@ -45,14 +44,6 @@ int main(){uint8_t jpeg[]={255,216,255,217};hal::camera::CameraFrame f{jpeg,4,20
  for(int i=0;i<20;++i){assert(s.renderIspPreview(f));assert(owned.size()==3);}s.referencePreview_=true;auto* front=s.preview_;assert(!s.renderIspPreview(f)&&front==s.preview_);for(unsigned i=0;i<224*168;++i)assert(front[i]==0x1234);
  auto count=opens;f.buf=nullptr;assert(!s.renderIspPreview(f)&&opens==count);f.buf=jpeg;f.len=0;assert(!s.renderIspPreview(f));assert(!core::cine::validJpeg(jpeg,4,UINT32_MAX,UINT32_MAX,UINT32_MAX,UINT32_MAX));
  s.releaseIspPreview();s.releaseIspPreview();assert(owned.size()==1);heap_caps_free(s.preview_);assert(owned.empty());
- f.buf=jpeg;f.len=4;behavior=0;
- for(int result:{0,1,2}){Session n;n.nativePreview_=true;n.preview_=static_cast<uint16_t*>(heap_caps_malloc(224*168*2,3));for(unsigned i=0;i<224*168;++i)n.preview_[i]=0xbeef;auto* front=n.preview_;nativeOutcome=result;nativeCalls=0;
- bool ok=n.renderIspPreview(f);assert(ok==(result!=2)&&nativeCalls==1);
- if(result==0){assert(n.nativeUnavailable_);assert(n.renderIspPreview(f)&&nativeCalls==1);}
- if(result==1){assert(n.preview_!=front&&!n.ispDecoder_);for(unsigned i=0;i<224*168;++i)assert(n.preview_[i]==0x4321);}
- if(result==2){assert(n.status_.previewInterrupted&&n.preview_==front&&!n.nativeUnavailable_&&!n.ispDecoder_);for(unsigned i=0;i<224*168;++i)assert(front[i]==0xbeef);}
- n.releaseIspPreview();heap_caps_free(n.preview_);assert(owned.empty());}
-
 }
 ''');subprocess.run(['c++','-std=c++11','-O1','-fsanitize=address,undefined','-I'+str(R/'include'),str(p/'test.cpp'),'-o',str(p/'test')],check=True);subprocess.run([str(p/'test')],check=True)
 print('PASS actual preview lifecycle under ASan/UBSan: PSRAM-only persistent decoder, OOM, open/dimension/partial-decode failures, atomic frame swap, malformed frames, repeated reuse and idempotent cleanup; codec mocked.')

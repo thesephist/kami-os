@@ -51,7 +51,6 @@ bool Session::open(Mode mode, bool pattern) {
   const uint64_t startupAt = esp_timer_get_time();
   if (!close(false))
     return false;
-  nativePreview_ = true;
   vendorGammaValid_ = false;
   ispConfig_ = IspConfig{};
   autoFrameVts_ = 0;
