@@ -53,6 +53,7 @@ bool Session::open(Mode mode, bool pattern) {
     return false;
   vendorGammaValid_ = false;
   ispConfig_ = IspConfig{};
+  autoFrameVts_ = 0;
   ispConfigured_ = false;
   ispReadback_ = {};
   status_ = Status{};
@@ -92,6 +93,7 @@ bool Session::open(Mode mode, bool pattern) {
     if (mode != Mode::Stock) {
       tuning = hal::camera::Tuning{};
       tuning.wb_mode = 1;
+      tuning.ae_level = -1;
       tuning.allowNightMode = false;
     }
     tuning.testPattern = pattern;
@@ -186,7 +188,8 @@ bool Session::open(Mode mode, bool pattern) {
   }
   const uint64_t ispAt = esp_timer_get_time();
   status_.open = true;
-  if ((mode == Mode::Isp3Mp || mode == Mode::IspVga) && !configureBaseline(16667, 16, true))
+  if ((mode == Mode::Isp3Mp || mode == Mode::IspVga) &&
+      !configureBaseline(16667, 16, true, !pattern))
     return false;
   status_.startupIspUs = uint32_t(esp_timer_get_time() - ispAt);
   const uint64_t previewAt = esp_timer_get_time();
@@ -364,7 +367,14 @@ void Session::referencePreview(bool enabled) {
 void Session::adjustShutter(int delta) {
   if (mode_ == Mode::Stock || pattern_ || !status_.open || !shutter_.valid || !delta)
     return;
-  int step = int(core::cine::nearestShutter(shutter_.requestedUs));
+  // Sample the live hardware result only when handing control to the wheel.
+  // Continuous metering itself runs in the sensor; no per-preview I2C polling.
+  const bool automatic = autoExposure();
+  if (automatic) {
+    if (!refreshExposure())
+      return;
+  }
+  int step = int(core::cine::nearestShutter(automatic ? shutter_.actualUs : shutter_.requestedUs));
   int next = delta < -int(core::cine::shutterCount)  ? 0
              : delta > int(core::cine::shutterCount) ? int(core::cine::shutterCount) - 1
                                                      : step + delta;
@@ -372,7 +382,7 @@ void Session::adjustShutter(int delta) {
     next = 0;
   if (next >= int(core::cine::shutterCount))
     next = core::cine::shutterCount - 1;
-  if (next == step && shutter_.requestedUs == core::cine::shutterSpeedsUs[next])
+  if (!automatic && next == step && shutter_.requestedUs == core::cine::shutterSpeedsUs[next])
     return;
   if (frameHeld_) {
     camera_.returnFrame();
@@ -494,6 +504,10 @@ bool Session::capture(bool saveRaw) {
     snprintf(status_.message, sizeof(status_.message), "Fresh sensor frame unavailable");
     return false;
   }
+  // These are live sensor values sampled near frame receipt, not embedded
+  // per-frame exposure metadata. Do not report the old startup/manual sample.
+  const bool exposureSampleValid = autoExposure() ? refreshExposure() : shutter_.valid;
+  const auto captureExposure = exposureSampleValid ? shutter_ : hal::camera::ShutterInfo{};
   bool ok = false;
   if (isIsp(mode_)) {
     const uint64_t at = esp_timer_get_time();
@@ -546,6 +560,9 @@ bool Session::capture(bool saveRaw) {
   if (ispConfigured_ && ispReadback_.valid)
     for (unsigned c = 0; c < 3; ++c)
       sensorInfo.gains[c] = ispReadback_.wb[c];
+  char aeLevel[8] = "null";
+  if (autoExposure())
+    snprintf(aeLevel, sizeof(aeLevel), "%d", int(ispConfig_.aeLevel));
   char metadata[2400];
   const int n = snprintf(
       metadata, sizeof(metadata),
@@ -555,6 +572,7 @@ bool Session::capture(bool saveRaw) {
       "\"preview_path\":\"%s\",\"preview_dma_age_us\":%lu,\"preview_draw_age_us\":%lu,\"preview_"
       "interval_us\":%lu,\"color_profile\":\"%s\",\"color_version\":%u,\"color_domain\":\"%s\","
       "\"relative_wb_rgb\":%s,\"wb_preset\":%u,\"reference_profile\":\"%s\",\"shutter\":{"
+      "\"sample_valid\":%s,\"sample_source\":\"%s\",\"automatic\":%s,\"ae_level\":%s,"
       "\"manual\":%s,\"requested_us\":%lu,\"actual_us\":%lu,\"integration_ticks_q4\":%lu,\"gain_"
       "q4\":%u,\"hts\":%u,\"vts\":%u,\"clock_hz\":%lu},\"isp_experiment\":%d,\"isp_fitted_matrix\":"
       "%s,\"isp_vendor_saturation\":%d,\"software_filmic\":%s,\"tone_version\":2,\"exposure_"
@@ -582,9 +600,15 @@ bool Session::capture(bool saveRaw) {
       : params_.color == 2 ? "display-sRGB"
                            : "scene-linear",
       !isIsp(mode_) && params_.color == 1 ? "[0.92,1.0,1.12]" : "[1.0,1.0,1.0]", wbPreset_, "none",
-      shutter_.valid && shutter_.manual ? "true" : "false", (unsigned long)shutter_.requestedUs,
-      (unsigned long)shutter_.actualUs, (unsigned long)shutter_.ticks, shutter_.gainQ4,
-      shutter_.hts, shutter_.vts, (unsigned long)shutter_.clockHz,
+      exposureSampleValid ? "true" : "false",
+      autoExposure()        ? "live-after-frame"
+      : exposureSampleValid ? "locked"
+                            : "unavailable",
+      autoExposure() ? "true" : "false", aeLevel,
+      captureExposure.valid && captureExposure.manual ? "true" : "false",
+      (unsigned long)captureExposure.requestedUs, (unsigned long)captureExposure.actualUs,
+      (unsigned long)captureExposure.ticks, captureExposure.gainQ4, captureExposure.hts,
+      captureExposure.vts, (unsigned long)captureExposure.clockHz,
       ispConfigured_ ? int(ispConfig_.gamma) : -1,
       (ispConfigured_ && ispConfig_.matrix == ColorMatrix::FittedDiagnostic) ? "true" : "false",
       ispConfigured_ && ispConfig_.matrix != ColorMatrix::FittedDiagnostic

@@ -16,6 +16,8 @@ struct IspConfig {
   uint32_t shutterUs = 16667;
   unsigned gainQ4 = 16;
   bool useSettledExposure = false;
+  bool autoExposure = false;
+  int8_t aeLevel = -1;
 };
 struct Status {
   uint32_t startupUs = 0, startupPrepareUs = 0, startupInitUs = 0, startupAeUs = 0,
@@ -54,6 +56,9 @@ public:
   bool benchmarkResolution();     // Gated same-held-RAW resolution experiment.
   void adjustExposure(int delta); // Diagnostic rendering gain; wheel uses shutter.
   void adjustShutter(int delta);
+  bool autoExposure() const { return ispConfigured_ && ispConfig_.autoExposure; }
+  bool resumeAutoExposure();
+  bool refreshExposure(); // Explicit UI-task telemetry; metering itself is in hardware.
   const hal::camera::ShutterInfo &shutter() const { return shutter_; }
   void adjustWhiteBalance(int delta);
   unsigned whiteBalance() const { return wbPreset_; }
@@ -92,10 +97,12 @@ private:
   Status status_;
   uint8_t vendorGamma_[16] = {};
   bool vendorGammaValid_ = false;
+  uint16_t autoFrameVts_ = 0;
   IspConfig ispConfig_;
   bool ispConfigured_ = false;
   hal::camera::IspReadback ispReadback_;
-  bool configureBaseline(uint32_t shutterUs, unsigned gainQ4, bool settled = false);
+  bool configureBaseline(uint32_t shutterUs, unsigned gainQ4, bool settled = false,
+                         bool automatic = false);
   void configure();
   void releaseIspPreview();
   bool renderIspPreview(const hal::camera::CameraFrame &frame);

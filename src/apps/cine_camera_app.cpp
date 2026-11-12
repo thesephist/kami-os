@@ -123,6 +123,10 @@ void tick(uint32_t) {
   }
 }
 void shutterValue(char *text, size_t bytes) {
+  if (session.autoExposure()) {
+    snprintf(text, bytes, "Auto");
+    return;
+  }
   if (session.shutter().valid && session.shutter().actualUs)
     snprintf(
         text, bytes, "1/%lu",
@@ -299,6 +303,18 @@ void input(hal::input::InputEvent e) {
     invalidate();
   }
 }
+bool holdWheel() {
+  // In every Cine view this gesture is consumed instead of putting Kami to sleep.
+  if (session.status().open && session.resumeAutoExposure()) {
+    wheel.reset();
+    wheel.show(millis());
+    settingsList.selected = 0;
+    menuEditing = false;
+    services::vibration::navigationFeedback(services::vibration::Cue::Select);
+    invalidate();
+  }
+  return true;
+}
 core::health::RuntimePolicy policy() {
   bool busy = current == View::Preview || current == View::Opening || session.holdsResources();
   auto p = core::health::whileBusy(busy);
@@ -315,6 +331,7 @@ App app = [] {
                                             invalidate, exit, "src/apps/cine_camera_app.cpp",
                                             screens, presentation, policy);
   a.onCover = cover;
+  a.onPowerHold = holdWheel;
   return a;
 }();
 bool handleSerialCommand(const char *line, Print &output) {
@@ -392,6 +409,8 @@ bool handleSerialCommand(const char *line, Print &output) {
     return true;
   }
   if (!strcmp(line, "cine shutter")) {
+    if (session.autoExposure())
+      session.refreshExposure();
     const auto &s = session.shutter();
     output.printf("[cine] shutter valid=%u manual=%u requested_us=%lu actual_us=%lu ticks_q4=%lu "
                   "gain_q4=%u hts=%u vts=%u clock_hz=%lu frame_us=%lu\n",
@@ -459,6 +478,23 @@ bool handleSerialCommand(const char *line, Print &output) {
     if (parseInteger(line + 14, -6, 6, target))
       session.adjustExposure(int(target) - session.parameters().exposureThirds);
     output.printf("[cine] bench exposure_thirds=%d\n", session.parameters().exposureThirds);
+    return true;
+  }
+  if (!strncmp(line, "cine bench auto ", 16)) {
+    long level = 0;
+    if (!parseInteger(line + 16, -2, 2, level)) {
+      output.println("[cine-ae] use bench auto LEVEL (-2..2)");
+      return true;
+    }
+    cine::IspConfig config;
+    config.autoExposure = true;
+    config.useSettledExposure = true;
+    config.aeLevel = int8_t(level);
+    const bool ok = session.configureIsp(config);
+    if (!ok && !session.status().open)
+      current = View::Error;
+    output.printf("[cine-ae] ok=%u auto=%u ae_level=%ld\n", ok, session.autoExposure(), level);
+    invalidate();
     return true;
   }
   if (!strncmp(line, "cine bench isp ", 15)) {

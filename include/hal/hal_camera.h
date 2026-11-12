@@ -161,7 +161,16 @@ struct RawInfo { bool enabled=false;uint8_t black=4;uint16_t gains[3]={1024,1024
 struct ShutterInfo {bool valid=false,manual=false;uint32_t requestedUs=0,actualUs=0,ticks=0,clockHz=0,frameUs=0;uint16_t gainQ4=0,hts=0,vts=0;};
 bool lockRawShutter(ShutterInfo* out); // Freeze settled AE/AGC; nearest safe shutter.
 bool setRawShutter(uint32_t microseconds,ShutterInfo* out); // Keep locked gain.
-struct IspExperiment {uint8_t gamma[16]={},cmx[11]={};uint32_t shutterUs=16667;uint16_t gainQ4=16;uint8_t wbMode=1;bool useSettledExposure=false;};
+struct IspExperiment {
+  uint8_t gamma[16] = {}, cmx[11] = {};
+  uint32_t shutterUs = 16667;
+  uint16_t gainQ4 = 16;
+  uint8_t wbMode = 1;
+  bool useSettledExposure = false;
+  bool autoExposure = false;
+  int8_t aeLevel = -1;
+  uint16_t autoVts = 0;
+};
 struct IspReadback {bool valid=false;uint8_t gamma[16]={},cmx[11]={},flags[2]={};uint16_t wb[3]={};uint8_t wbMode=0;ShutterInfo shutter;};
 // Scoped, volatile JPEG-only experiment. Finite register allowlist, rollback on
 // write/readback failure. Caller must own the camera with no outstanding loan.

@@ -5,10 +5,11 @@
 #include <string.h>
 namespace services {
 namespace cine_camera {
-bool Session::configureBaseline(uint32_t us, unsigned gain, bool settled) {
+bool Session::configureBaseline(uint32_t us, unsigned gain, bool settled, bool automatic) {
   IspConfig config;
-  config.shutterUs = us;
-  config.gainQ4 = gain;
+  config.autoExposure = automatic;
+  config.shutterUs = us < 1000 ? 1000 : us > 100000 ? 100000 : us;
+  config.gainQ4 = gain < 16 ? 16 : gain > 64 ? 64 : gain;
   config.useSettledExposure = settled;
   return configureIsp(config);
 }
@@ -23,7 +24,8 @@ bool Session::configureIsp(const IspConfig &config) {
   if (!status_.open || !isIsp(mode_) || unsigned(curve) > unsigned(GammaCurve::Vendor) ||
       unsigned(matrix) > unsigned(ColorMatrix::FittedDiagnostic) ||
       (curve == GammaCurve::Vendor && (!vendorGammaValid_ || thirds != 0)) || thirds < -6 ||
-      thirds > 6 || us < 1000 || us > 100000 || gain < 16 || gain > 64)
+      thirds > 6 || config.aeLevel < -2 || config.aeLevel > 2 || us < 1000 || us > 100000 ||
+      gain < 16 || gain > 64)
     return false;
   camera_.returnFrame();
   frameHeld_ = false;
@@ -32,6 +34,9 @@ bool Session::configureIsp(const IspConfig &config) {
   request.gainQ4 = gain;
   request.wbMode = wbPreset_;
   request.useSettledExposure = config.useSettledExposure;
+  request.autoExposure = config.autoExposure;
+  request.aeLevel = config.aeLevel;
+  request.autoVts = autoFrameVts_;
   if (curve == GammaCurve::Vendor)
     memcpy(request.gamma, vendorGamma_, 16);
   else if (!core::cine::makeIspGamma(curve == GammaCurve::Filmic, thirds, request.gamma))
@@ -49,10 +54,28 @@ bool Session::configureIsp(const IspConfig &config) {
   ispConfig_ = config;
   ispConfigured_ = true;
   shutter_ = ispReadback_.shutter;
+  if (!autoFrameVts_)
+    autoFrameVts_ = shutter_.vts;
   params_.exposureThirds = thirds;
   shutterReadyUs_ = esp_timer_get_time() + uint64_t(shutter_.frameUs) * 2;
   status_.saved = false;
   return true;
+}
+bool Session::refreshExposure() {
+  if (!status_.open || !autoExposure())
+    return false;
+  hal::camera::ShutterInfo live{};
+  if (!hal::camera::readJpegShutter(&live) || !live.valid || live.manual)
+    return false;
+  shutter_ = live;
+  return true;
+}
+bool Session::resumeAutoExposure() {
+  if (!status_.open || pattern_ || (mode_ != Mode::Isp3Mp && mode_ != Mode::IspVga))
+    return false;
+  if (autoExposure())
+    return true;
+  return configureBaseline(shutter_.actualUs, shutter_.gainQ4, false, true);
 }
 const char *Session::whiteBalanceName(unsigned preset) {
   static const char *names[] = {"Auto", "Sunny", "Cloudy", "Office", "Home"};
@@ -66,7 +89,8 @@ void Session::adjustWhiteBalance(int delta) {
   wbPreset_ = 1 + unsigned((step % 4 + 4) % 4);
   if (wbPreset_ == previous)
     return;
-  if (!configureBaseline(shutter_.requestedUs, shutter_.gainQ4))
+  if (!configureBaseline(autoExposure() ? shutter_.actualUs : shutter_.requestedUs, shutter_.gainQ4,
+                         false, autoExposure()))
     wbPreset_ = previous;
 }
 } // namespace cine_camera

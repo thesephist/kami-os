@@ -162,6 +162,7 @@ struct Session {
   } st;
   unsigned wb = 1;
   const Shutter &shutter() const { return s; }
+  bool autoExposure() const { return false; }
   const Status &status() const { return st; }
   unsigned whiteBalance() const { return wb; }
   static const char *whiteBalanceName(unsigned w) {

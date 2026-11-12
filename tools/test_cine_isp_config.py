@@ -25,22 +25,24 @@ extern hal::camera::IspExperiment last;
 struct Camera {
  void returnFrame(){}
  bool configureIspExperiment(const hal::camera::IspExperiment& r,hal::camera::IspReadback* p){
-  ++writes;last=r;if(fail)return false;p->valid=true;p->shutter.requestedUs=r.shutterUs;p->shutter.gainQ4=r.gainQ4;return true;
+  ++writes;last=r;if(fail)return false;p->valid=true;p->shutter.requestedUs=r.shutterUs;p->shutter.gainQ4=r.gainQ4;p->shutter.vts=r.autoVts?r.autoVts:1564;p->shutter.valid=true;p->shutter.manual=!r.autoExposure;p->shutter.actualUs=r.shutterUs;return true;
  }
 };
 struct Session {
  struct Status{bool open=true,saved=false;char message[80];}status_;
  Camera camera_;Mode mode_=Mode::Isp3Mp;
- bool frameHeld_=false,vendorGammaValid_=false,ispConfigured_=false;
+ bool frameHeld_=false,vendorGammaValid_=false,ispConfigured_=false,pattern_=false;
  uint8_t vendorGamma_[16]={};unsigned wbPreset_=1;
- uint64_t shutterReadyUs_=0;
+ uint64_t shutterReadyUs_=0;uint16_t autoFrameVts_=0;
  IspConfig ispConfig_;
  hal::camera::IspReadback ispReadback_;
  hal::camera::ShutterInfo shutter_;
  core::cine::Parameters params_;
  void close(){status_.open=false;}
  bool configureIsp(const IspConfig&);
- bool configureBaseline(uint32_t,unsigned,bool=false);
+ bool configureBaseline(uint32_t,unsigned,bool=false,bool=false);
+ bool autoExposure() const {return ispConfigured_&&ispConfig_.autoExposure;}
+ bool refreshExposure();bool resumeAutoExposure();
  void adjustWhiteBalance(int);
  static const char* whiteBalanceName(unsigned);
 };
@@ -54,6 +56,7 @@ struct Session {
 #include <climits>
 #include <initializer_list>
 namespace services { namespace cine_camera { bool fail=false;unsigned writes=0;hal::camera::IspExperiment last;}}
+namespace hal{namespace camera{bool readJpegShutter(ShutterInfo* out){out->valid=true;out->manual=false;out->actualUs=12500;out->gainQ4=32;return true;}}}
 int main(){
  using namespace services::cine_camera;
  const uint8_t neutral[]={29,96,3,12,120,132,125,107,18,1,152};
@@ -71,6 +74,13 @@ int main(){
  s.adjustWhiteBalance(-1);assert(s.wbPreset_==4);s.adjustWhiteBalance(-3);assert(s.wbPreset_==1);
  unsigned before=writes;s.adjustWhiteBalance(0);s.adjustWhiteBalance(4);assert(writes==before);
  s.adjustWhiteBalance(INT_MAX);assert(s.wbPreset_==4);s.adjustWhiteBalance(INT_MIN);assert(s.wbPreset_==4);
+ assert(s.resumeAutoExposure()&&s.autoExposure()&&last.autoExposure&&last.aeLevel==-1);
+ assert(s.autoFrameVts_==1564&&last.autoVts==1564);
+ s.adjustWhiteBalance(1);assert(s.autoExposure()&&last.autoExposure);
+ assert(s.refreshExposure()&&s.shutter_.actualUs==12500&&s.shutter_.gainQ4==32);
+ unsigned autoWrites=writes;assert(s.resumeAutoExposure()&&writes==autoWrites);
+ assert(s.configureBaseline(100000,32)&&!s.autoExposure());
+ assert(s.resumeAutoExposure()&&last.autoExposure&&last.autoVts==1564);
  assert(s.configureBaseline(100000,32,true)&&last.useSettledExposure&&last.shutterUs==100000&&last.gainQ4==32&&!memcmp(last.cmx,selected,11));
  config=IspConfig{};config.gamma=GammaCurve::Vendor;before=writes;
  assert(!s.configureIsp(config)&&writes==before);s.vendorGammaValid_=true;

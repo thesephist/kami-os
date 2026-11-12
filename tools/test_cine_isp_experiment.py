@@ -49,6 +49,22 @@ int main(){using namespace hal::camera;
  snapshot=registers;request.wbMode=3;failRegister=0x3403;assert(!configureIspExperiment(request,&output)&&registers==snapshot);request.wbMode=0;
  writes.clear();request.wbMode=5;assert(!configureIspExperiment(request,&output)&&writes.empty());request.wbMode=0;
  registers[0x303d]=2;assert(!configureIspExperiment(request,&output)&&writes.empty());registers[0x303d]=0x30;
+ // Auto is a bounded hardware loop; gamma/color/WB remain the Cine preset.
+ request.autoExposure=true;request.autoVts=1564;request.aeLevel=-1;
+ assert(configureIspExperiment(request,&output)&&output.valid&&!output.shutter.manual);
+ assert(output.shutter.requestedUs==0&&output.shutter.vts==1564&&(registers[0x3503]&3)==0);
+ assert((registers[0x3a00]&5)==0&&registers[0x3a18]==0&&registers[0x3a19]==64);
+ assert(registers[0x3a0f]==48&&registers[0x3a10]==41&&registers[0x3a1b]==48&&registers[0x3a1e]==41&&registers[0x3a11]==96&&registers[0x3a1f]==20);
+ assert(((registers[0x3a02]<<8)|registers[0x3a03])==1560&&((registers[0x3a14]<<8)|registers[0x3a15])==1560);
+ for(int reg:{0x3a02,0x3a03,0x3a14,0x3a15,0x3a18,0x3a19,0x3a0f,0x3a10,0x3a1b,0x3a1e,0x3a11,0x3a1f,0x3503}){
+  snapshot=registers;failRegister=reg;assert(!configureIspExperiment(request,&output)&&registers==snapshot);
+ }
+ // An Auto WB/target update retains current integration even below the manual ladder.
+ registers[0x3500]=0;registers[0x3501]=0;registers[0x3502]=80;registers[0x350b]=32;
+ assert(configureIspExperiment(request,&output)&&output.shutter.ticks==80&&output.shutter.actualUs<1000&&output.shutter.gainQ4==32);
+ request.aeLevel=-3;writes.clear();assert(!configureIspExperiment(request,&output)&&writes.empty());request.aeLevel=-1;
+ request.autoExposure=false;request.shutterUs=100000;assert(configureIspExperiment(request,&output)&&output.shutter.manual&&output.shutter.vts>1564);
+ request.autoExposure=true;assert(configureIspExperiment(request,&output)&&!output.shutter.manual&&output.shutter.vts==1564);
  for(int ev=-6;ev<=6;ev++)for(bool film:{false,true}){assert(core::cine::makeIspGamma(film,ev,request.gamma));for(int i=1;i<15;i++)assert(request.gamma[i]>=request.gamma[i-1]);}
  assert(!core::cine::makeIspGamma(true,7,request.gamma));
  core::cine::Parameters p;p.color=2;p.filmic=false;for(auto& g:p.gains)g=1024;core::cine::ToneMap t;t.configure(p);uint8_t r,g,b;t.pixel(49,49,49,r,g,b);assert(r==117&&g==117&&b==117);t.pixel(255,255,255,r,g,b);assert(r==255&&g==255&&b==255);

@@ -32,11 +32,12 @@ namespace apps{namespace cine_camera{App app;}namespace camera_menu{App app;}nam
 struct NavHandler{static NavHandler& instance(){static NavHandler n;return n;}App* pushed=nullptr;int popped=0;void push(App* a){pushed=a;}void pop(){++popped;}};
 namespace ui{namespace nav{bool isBackTap(hal::input::InputEvent e){return e.type==hal::input::EventType::ButtonA_Tap;}bool isEnterTap(hal::input::InputEvent e){return e.type==hal::input::EventType::ButtonC_Tap;}}}
 struct List{int selected=0,totalItems=3;void scroll(int delta){selected+=delta;if(selected<0)selected=0;if(selected>2)selected=2;}}settingsList;
-struct Session{struct Status{bool open=true;}s;int shutter=0,wb=0;void adjustShutter(int d){shutter+=d;}void adjustWhiteBalance(int d){wb+=d;}const Status& status(){return s;}}session;
+struct Session{struct Status{bool open=true;}s;int shutter=0,wb=0;void adjustShutter(int d){shutter+=d;}void adjustWhiteBalance(int d){wb+=d;}int autoResumes=0;bool resumeAutoExposure(){++autoResumes;return s.open;}const Status& status(){return s;}}session;
 enum class View{Menu,Opening,Preview,Error};View current=View::Preview;
 bool menuEditing=false;core::cine::WheelControl wheel;unsigned clockMs=100,photos=0,opens=0;uint32_t millis(){return clockMs;}void invalidate(){}void begin(){++opens;}void snap(){++photos;}
 """
     + function("src/apps/cine_camera_app.cpp", "void input(hal::input::InputEvent e)")
+    + function("src/apps/cine_camera_app.cpp", "bool holdWheel()")
     + r"""
 struct AgentState{};
 """
@@ -55,6 +56,9 @@ int main(){using E=hal::input::EventType;
  input({E::ButtonC_Tap});assert(menuEditing&&cues==2);input({E::Scroll,1});assert(session.shutter==-4);
  input({E::ButtonA_Tap});assert(!menuEditing&&current==View::Menu);input({E::ButtonA_Tap});assert(current==View::Preview);
  current=View::Opening;input({E::ButtonC_Tap});assert(cues==2);current=View::Error;input({E::ButtonA_Tap});assert(NavHandler::instance().popped==1);
+ current=View::Preview;wheel.toggle(clockMs);assert(holdWheel()&&session.autoResumes==1&&!wheel.whiteBalance()&&wheel.shown(clockMs)&&cues==3);
+ current=View::Menu;menuEditing=true;settingsList.selected=1;assert(holdWheel()&&session.autoResumes==2&&!menuEditing&&settingsList.selected==0);
+ current=View::Opening;session.s.open=false;assert(holdWheel()&&session.autoResumes==2);
  AgentState state;onInput(state,{E::ButtonB_Tap});assert(NavHandler::instance().pushed==&apps::cine_camera::app);
  onInput(state,{E::ButtonA_Tap});assert(NavHandler::instance().pushed==&apps::voice_recorder::app);
  onInput(state,{E::Scroll,1});assert(NavHandler::instance().pushed==&apps::menu::app);
