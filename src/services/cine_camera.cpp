@@ -5,6 +5,7 @@
 #include "core/watchdog.h"
 #include "core/cine_shutter.h"
 #include "core/cine_frame.h"
+#include "core/cine_isp.h"
 #include <Arduino.h>
 #include <esp_camera.h>
 #include <esp_heap_caps.h>
@@ -51,7 +52,7 @@ bool Session::open() {
   tuning.lenc = false;
   CINE_PROFILE(profile_.startupPrepareUs = uint32_t(esp_timer_get_time() - startupAt);)
   CINE_PROFILE(const uint64_t initAt = esp_timer_get_time();)
-  if (!camera_.start(FRAMESIZE_QXGA, PIXFORMAT_JPEG, &tuning, 6)) {
+  if (!camera_.start(FRAMESIZE_QXGA, PIXFORMAT_JPEG, &tuning, core::cine::jpegQuantizationScale)) {
     snprintf(status_.message, sizeof(status_.message), "Camera init failed: %s",
              camera_.lastError());
     close();
@@ -256,13 +257,15 @@ bool Session::capture() {
   const int n = snprintf(metadata, sizeof(metadata),
                          "{\"version\":2,\"mode\":\"Cine ISP 3MP\",\"source\":\"sensor ISP "
                          "JPEG\",\"output_width\":2048,\"output_height\":1536,"
+                         "\"jpeg_quantization_scale\":%u,"
                          "\"color_profile\":\"sensor-ISP\",\"gamma\":\"sRGB "
                          "approximation\",\"vendor_saturation\":1,\"wb_preset\":%u,"
-                         "\"shutter\":{\"sample_valid\":%s,\"sample_source\":\"%s\",\"automatic\":%"
-                         "s,\"ae_level\":%s,\"manual\":%s,"
+                         "\"shutter\":{\"sample_valid\":%s,\"sample_source\":\"%s\","
+                         "\"automatic\":%s,\"ae_level\":%s,\"manual\":%s,"
                          "\"requested_us\":%lu,\"actual_us\":%lu,\"integration_ticks_q4\":%lu,"
                          "\"gain_q4\":%u,\"hts\":%u,\"vts\":%u,\"clock_hz\":%lu},\"saved\":%s}",
-                         unsigned(wbPreset_), sampleValid ? "true" : "false",
+                         unsigned(core::cine::jpegQuantizationScale), unsigned(wbPreset_),
+                         sampleValid ? "true" : "false",
                          autoExposure() ? "live-after-frame"
                          : sampleValid  ? "locked"
                                         : "unavailable",

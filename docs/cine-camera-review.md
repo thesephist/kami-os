@@ -6,8 +6,8 @@ Scope: OV3660 scratch hardware, upstream `cf3d1ce8ecfd7d4e4c63c52c9e25358dcdc526
 
 | Area | Stock Camera | Cine mode |
 | --- | --- | --- |
-| Capture source | Sensor ISP → sensor JPEG; default VGA (640×480), selectable HD/Max, subject to sensor/memory limits. | Same ISP/JPEG hardware; always native 2048×1536, JPEG quality register **6**. No RAW reconstruction, software resizing, grading, sharpening, Filmic curve, or JPEG re-encoding on normal saves. |
-| JPEG quality | HAL chooses by size: VGA 6, HD 14, high resolution 12. Lower register value means higher quality. | Fixed 6, including preview source. Saves the complete frame, not the cropped screen. |
+| Capture source | Sensor ISP → sensor JPEG; default VGA (640×480), selectable HD/Max, subject to sensor/memory limits. | Same ISP/JPEG hardware; always native 2048×1536, JPEG quality register **8**. No RAW reconstruction, software resizing, grading, sharpening, Filmic curve, or JPEG re-encoding on normal saves. |
+| JPEG quality | HAL chooses by size: VGA 6, HD 14, high resolution 12. Lower register value means higher quality. | Fixed 8, including preview source; see [compression study](cine-jpeg-compression-study.md). Saves the complete frame, not the cropped screen. |
 | Exposure | Continuous sensor auto exposure/gain; Default AE target 0, gain ceiling index 0; night mode may extend frame intervals. Bright/Dark/Manual profiles available. | Starts with continuous sensor AE/AGC at the darker vendor target **−1**, real gain capped at 4×. Turning the SS wheel freezes the current gain and selects **1/1000–1/10 s** manually; holding the wheel restores Auto. Auto keeps native frame timing (about 75ms maximum exposure on the 3MP profile), with night extension disabled. |
 | White balance | Default Cloudy; Bright uses Sunny, Dark uses Auto; Manual exposes all presets. | Starts Sunny; WB wheel mode cycles **Sunny → Cloudy → Office → Home → Sunny** in either direction. Auto is excluded from normal app controls. Presets are vendor settings, not measured Kelvin values. |
 | Tone transfer | Vendor gamma; Default contrast −1, brightness 0. | Fifteen sensor gamma points sampled from sRGB, plus the final-segment slope; nominal EC 0. Bypasses SDE contrast/brightness. This is an approximation, not calibrated linear RAW → sRGB. |
@@ -75,7 +75,8 @@ Filmic and fitted-matrix options, resize/re-encoding benchmarks, RAW retention,
 ROM decoder reference path, RAW shutter/transport/stack wrappers and their
 obsolete tests. The existing JPEG DMA compatibility safeguards remain.
 
-`Session::open()` has one configuration: 2048×1536 sensor JPEG at quality 6,
+`Session::open()` has one configuration: 2048×1536 sensor JPEG (now QS8 after the
+[compression study](cine-jpeg-compression-study.md)),
 fixed sRGB approximation/vendor +1 CMX, Sunny WB and continuous hardware Auto
 exposure by default. `WhiteBalance` admits four static presets; manual/Auto
 exposure is separate from image treatment. Settings, freshness checks,

@@ -280,3 +280,10 @@ Private evidence, exact binaries and install records are in
 `.local/lab/.origami/artifacts/cine-canonical-cleanup-20261112/`. Production ELF/map
 symbols are hash-verified in `~/.cache/kami-os/firmware-symbols/<image-sha256>/`.
 No personal images or generated firmware are tracked in Git.
+
+
+## JPEG compression baseline — November 12, 2026
+
+Selected native 3MP, 4:2:2 QS8; QS10 remains the documented secondary recommendation. The [compression study](cine-jpeg-compression-study.md) and [aggregate measurements](cine-jpeg-compression-results.json) cover 792 baseline encodes, three progressive probes, 34 device cases/306 decode-read-write repeats, and 110 received native-sensor samples. Every device preview hash matched the scalar reference.
+
+All 21 fork checks and linked production/SDK checks passed. Production image SHA-256 `64437ca411ac15798532715f72663a8ffcb8507d96a0ce8fd3b06edb17d39a7a` was flash-verified with protected data unchanged. The installed app passed controls, a native capture with all 128 QS8 table entries and metadata verified independently, three reopens and newest-first Photos integration; it was left at Home. Static RAM is unchanged; temporary transfer instrumentation is absent. Private evidence is retained under `.local/lab/.origami/artifacts/cine-jpeg-compression-20261112/`.

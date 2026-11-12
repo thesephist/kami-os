@@ -82,7 +82,7 @@ bool initialize(){return true;}Target prepare(){Target t;t.sequence=++sequence;s
 bool write(const Target& t,const uint8_t* data,size_t n){if(failWrite)return false;files[t.path].assign(data,data+n);return true;}
 }namespace camera{
 Session::PrepareResult Session::prepareCapture(bool deep){assert(!deep);reserved=true;return PrepareResult::Ready;}
-bool Session::start(int size,int format,const hal::camera::Tuning* t,int quality){assert(size==20&&format==4&&quality==6&&t->wb_mode==1&&t->ae_level==-1&&!t->lenc&&!t->allowNightMode);::running=!failInit;return ::running;}
+bool Session::start(int size,int format,const hal::camera::Tuning* t,int quality){assert(size==20&&format==4&&quality==8&&t->wb_mode==1&&t->ae_level==-1&&!t->lenc&&!t->allowNightMode);::running=!failInit;return ::running;}
 void Session::stop(){assert(!held);if(!stopBlocked)::running=false;}
 void Session::restoreUi(Resume){assert(!::running);reserved=false;}
 bool Session::read(hal::camera::CameraFrame* f){assert(::running&&!held);if(failRead)return false;clockUs+=100000;++reads;held=true;f->buf=jpeg.data();f->len=jpeg.size();f->width=badFrame?640:2048;f->height=1536;f->format=4;f->dmaStartUs=stale?0:clockUs;return true;}
@@ -110,7 +110,7 @@ int main(){using services::cine_camera::Session;using services::cine_camera::Whi
  c.adjustWhiteBalance(1);assert(!c.autoExposure()&&c.shutter().requestedUs==100000&&last.gainQ4==32);
  c.adjustShutter(INT_MIN);assert(c.shutter().requestedUs==1000);assert(c.resumeAutoExposure()&&c.autoExposure()&&last.autoVts==1564);count=configs;assert(c.resumeAutoExposure()&&configs==count);
  assert(!c.capture());clockUs+=1000000;assert(c.preview());stale=true;n=reads;assert(!c.capture()&&!held&&reads==n+4);stale=false;
- assert(c.capture()&&!held&&c.status().saved&&files[c.status().photoPath]==jpeg);std::string meta(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"automatic\":true")!=std::string::npos&&meta.find("\"sample_valid\":true")!=std::string::npos&&meta.find("\"output_width\":2048")!=std::string::npos);
+ assert(c.capture()&&!held&&c.status().saved&&files[c.status().photoPath]==jpeg);std::string meta(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"jpeg_quantization_scale\":8")!=std::string::npos);assert(meta.find("\"automatic\":true")!=std::string::npos&&meta.find("\"sample_valid\":true")!=std::string::npos&&meta.find("\"output_width\":2048")!=std::string::npos);
  stale=true;assert(!c.capture());stale=false;
 #if ORIGAMI_CINE_PROFILING
  assert(c.profile().saveUs==0&&c.profile().totalUs==0);
