@@ -4,8 +4,12 @@
 namespace services {
 namespace cine_camera {
 bool Session::configureExposure(ExposureMode mode, uint32_t us, unsigned gain) {
-  if (!status_.open || us < 1000 || us > 100000 || gain < 16 || gain > 64)
+  if (!status_.open)
     return false;
+  // Auto may legitimately be below the manual ladder. These request fields are
+  // bounded placeholders in Auto; the HAL preserves the live integration ticks.
+  us = us < 1000 ? 1000 : us > 100000 ? 100000 : us;
+  gain = gain < 16 ? 16 : gain > 64 ? 64 : gain;
   camera_.returnFrame();
   hal::camera::CineIspRequest request;
   request.shutterUs = us;

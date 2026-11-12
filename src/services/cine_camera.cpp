@@ -213,6 +213,7 @@ bool Session::capture() {
     return false;
   }
   status_.saved = false;
+  CINE_PROFILE(profile_.frameUs = profile_.saveUs = profile_.totalUs = 0;)
   status_.photoPath[0] = status_.metadataPath[0] = 0;
   auto target = photos::prepare();
   if (!target.valid()) {
