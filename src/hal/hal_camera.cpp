@@ -649,7 +649,7 @@ bool readJpegShutter(ShutterInfo* output){
 bool configureCineIsp(const CineIspRequest &request, CineIspReadback *output) {
   if (!output || request.wbMode < 1 || request.wbMode > 4 ||
       request.shutterUs < 1000 || request.shutterUs > 100000 || request.gainQ4 < 16 ||
-      request.gainQ4 > 64 || !s_initialized || s_detectedPid != 0x3660 ||
+      request.gainQ4 > core::cine::gainCeilingQ4 || !s_initialized || s_detectedPid != 0x3660 ||
       s_lastFb)
     return false;
   auto *sensor = esp_camera_sensor_get();
@@ -704,9 +704,9 @@ bool configureCineIsp(const CineIspRequest &request, CineIspReadback *output) {
       write(0x3a14, maxRows >> 8);
       write(0x3a15, maxRows & 255);
       // OV3660 uses Q4 real gain here. The generic driver's enum write is not
-      // a real-gain ceiling: 0x40 is 4x, matching Cine's existing gain bound.
-      write(0x3a18, 0);
-      write(0x3a19, 64);
+      // a real-gain ceiling. Keep the sensor limit and manual handoff bound equal.
+      write(0x3a18, core::cine::gainCeilingQ4 >> 8);
+      write(0x3a19, core::cine::gainCeilingQ4 & 255);
       uint8_t aeControl = 0;
       ok = ovReadReg(0x3a00, &aeControl) && ok;
       write(0x3a00, aeControl & ~5u); // no night mode and no AEC freeze
@@ -740,7 +740,7 @@ bool configureCineIsp(const CineIspRequest &request, CineIspReadback *output) {
             ? (shutter.ticks > capTicks ? capTicks : shutter.ticks)
             : core::cine::shutterTicks(requestedUs, shutter.hts, shutter.vts, shutter.clockHz);
     if (request.autoExposure)
-      requestedGain = shutter.gainQ4 < 16 ? 16 : shutter.gainQ4 > 64 ? 64 : shutter.gainQ4;
+      requestedGain = shutter.gainQ4 < 16 ? 16 : shutter.gainQ4 > core::cine::gainCeilingQ4 ? core::cine::gainCeilingQ4 : shutter.gainQ4;
     write(0x3500, (ticks >> 16) & 15);
     write(0x3501, (ticks >> 8) & 255);
     write(0x3502, ticks & 255);

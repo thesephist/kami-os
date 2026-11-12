@@ -1,4 +1,5 @@
 #include "services/cine_camera.h"
+#include "core/cine_isp.h"
 #include <esp_timer.h>
 #include <stdio.h>
 namespace services {
@@ -9,7 +10,7 @@ bool Session::configureExposure(ExposureMode mode, uint32_t us, unsigned gain) {
   // Auto may legitimately be below the manual ladder. These request fields are
   // bounded placeholders in Auto; the HAL preserves the live integration ticks.
   us = us < 1000 ? 1000 : us > 100000 ? 100000 : us;
-  gain = gain < 16 ? 16 : gain > 64 ? 64 : gain;
+  gain = gain < 16 ? 16 : gain > core::cine::gainCeilingQ4 ? core::cine::gainCeilingQ4 : gain;
   camera_.returnFrame();
   hal::camera::CineIspRequest request;
   request.shutterUs = us;

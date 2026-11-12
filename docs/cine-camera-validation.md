@@ -287,3 +287,30 @@ No personal images or generated firmware are tracked in Git.
 Selected native 3MP, 4:2:2 QS8; QS10 remains the documented secondary recommendation. The [compression study](cine-jpeg-compression-study.md) and [aggregate measurements](cine-jpeg-compression-results.json) cover 792 baseline encodes, three progressive probes, 34 device cases/306 decode-read-write repeats, and 110 received native-sensor samples. Every device preview hash matched the scalar reference.
 
 All 21 fork checks and linked production/SDK checks passed. Production image SHA-256 `64437ca411ac15798532715f72663a8ffcb8507d96a0ce8fd3b06edb17d39a7a` was flash-verified with protected data unchanged. The installed app passed controls, a native capture with all 128 QS8 table entries and metadata verified independently, three reopens and newest-first Photos integration; it was left at Home. Static RAM is unchanged; temporary transfer instrumentation is absent. Private evidence is retained under `.local/lab/.origami/artifacts/cine-jpeg-compression-20261112/`.
+
+## 2026-11-12: 8× Cine gain ceiling
+
+Cine's gain ceiling is now 8× (OV3660 Q4 value 128). One shared core constant
+sets the hardware Auto ceiling, HAL request bounds, Auto gain preservation and
+service/manual-handoff clamping. The exposure target, shutter limits, native
+frame cadence, Sunny default and JPEG/ISP treatment are unchanged.
+
+The production build and all 21 fork/SDK checks passed, including gain-boundary
+and rollback checks, preserving 5× gain on Auto/WB updates, freezing 8× gain on
+manual handoff, and retaining it through manual WB changes. The linked-image
+check confirmed production diagnostics/profiling/input tracing are absent; the
+reviewed SDK inventory passed all 84 archives. RAM and application flash remain
+223,364 and 5,284,713 bytes respectively.
+
+On the scratch OV3660, Auto selected 37,567µs at
+8× gain (the previous 4× build used 37,567µs at
+4× in the comparison scene). Manual shutter selected
+50,001µs and retained 8×.
+Changing Sunny to Cloudy retained the same manual shutter and gain. Holding the
+wheel restored Auto, and opening the camera again succeeded. A native
+2048×1536 / 4:2:2 JPEG matched the existing QS8 quantization tables.
+
+Application flash, protected metadata and normal boot were verified after
+installation. The device returned to Home with USB service access closed.
+These captures validate control behavior; they are not a motion/noise benchmark
+or a claim that raising the ceiling always shortens exposure.

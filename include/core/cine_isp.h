@@ -10,6 +10,8 @@ constexpr uint8_t matrix[11] = {29, 96, 3, 13, 132, 145, 138, 118, 20, 1, 152};
 // OV3660 quantization scale: lower means higher quality. See
 // docs/cine-jpeg-compression-study.md.
 constexpr uint8_t jpegQuantizationScale = 8;
+// OV3660 real gain uses Q4: 128 / 16 = 8x. Shared by Auto and manual handoff.
+constexpr uint16_t gainCeilingQ4 = 8 * 16;
 constexpr int8_t aeLevel = -1;
 } // namespace cine
 } // namespace core

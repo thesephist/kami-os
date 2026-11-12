@@ -105,9 +105,10 @@ int main(){using services::cine_camera::Session;using services::cine_camera::Whi
  assert(c.preview()&&!held);failDecode=true;assert(!c.preview()&&!held&&!c.status().previewInterrupted);failDecode=false;
  badFrame=true;assert(!c.preview()&&!held);badFrame=false;
  for(int delta:{1,-1,INT_MAX,INT_MIN}){c.adjustWhiteBalance(delta);assert(unsigned(c.whiteBalance())>=1&&unsigned(c.whiteBalance())<=4&&c.autoExposure());}
- liveUs=500;liveGain=80;assert(c.refreshExposure());c.adjustWhiteBalance(1);assert(c.autoExposure()&&last.shutterUs==1000&&last.gainQ4==64);liveUs=10000;liveGain=32;
- c.adjustShutter(INT_MAX);assert(!c.autoExposure()&&c.shutter().requestedUs==100000&&last.gainQ4==32);auto count=configs;c.adjustShutter(1);assert(configs==count);
- c.adjustWhiteBalance(1);assert(!c.autoExposure()&&c.shutter().requestedUs==100000&&last.gainQ4==32);
+ liveUs=500;liveGain=160;assert(c.refreshExposure());c.adjustWhiteBalance(1);assert(c.autoExposure()&&last.shutterUs==1000&&last.gainQ4==128);
+ liveGain=80;assert(c.refreshExposure());c.adjustWhiteBalance(1);assert(c.autoExposure()&&last.gainQ4==80);liveUs=10000;liveGain=128;
+ c.adjustShutter(INT_MAX);assert(!c.autoExposure()&&c.shutter().requestedUs==100000&&last.gainQ4==128);auto count=configs;c.adjustShutter(1);assert(configs==count);
+ c.adjustWhiteBalance(1);assert(!c.autoExposure()&&c.shutter().requestedUs==100000&&last.gainQ4==128);
  c.adjustShutter(INT_MIN);assert(c.shutter().requestedUs==1000);assert(c.resumeAutoExposure()&&c.autoExposure()&&last.autoVts==1564);count=configs;assert(c.resumeAutoExposure()&&configs==count);
  assert(!c.capture());clockUs+=1000000;assert(c.preview());stale=true;n=reads;assert(!c.capture()&&!held&&reads==n+4);stale=false;
  assert(c.capture()&&!held&&c.status().saved&&files[c.status().photoPath]==jpeg);std::string meta(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"jpeg_quantization_scale\":8")!=std::string::npos);assert(meta.find("\"automatic\":true")!=std::string::npos&&meta.find("\"sample_valid\":true")!=std::string::npos&&meta.find("\"output_width\":2048")!=std::string::npos);

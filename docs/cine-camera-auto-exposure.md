@@ -22,11 +22,19 @@ will be retained. The canonical JPEG tone and color treatment is fixed.
 AEC/AGC runs in the sensor, without per-preview I2C polling or userspace image
 analysis. Auto restores the session's original VTS after a slow manual exposure,
 keeps night-mode frame extension off, caps exposure at the shorter of native frame
-capacity and 100ms, and caps real gain at 4x. The native 3MP profile is therefore
+capacity and 100ms, and caps real gain at 8x. The native 3MP profile is therefore
 bounded by approximately 75ms in Auto; the sensor's anti-flicker band limits can
 impose a lower effective maximum. Manual can still reach 100ms. The gain
-ceiling uses OV3660's Q4 real-gain register encoding (`0x40`), rather than the
+ceiling uses OV3660's Q4 real-gain register encoding (`0x80`), rather than the
 generic driver's gain-ceiling enum value.
+
+The sensor chooses shutter and gain together from its metered image level.
+Raising the ceiling from 4x to 8x permits one additional stop of amplification;
+it does not change the target or impose shutter-first or gain-first priority.
+Anti-flicker constraints can quantize shutter choices. The exact allocation
+policy is not specified by our code. Gain through 8x is in the sensor's analog
+range; no additional digital gain is enabled. Manual shutter freezes the latest
+live gain, including values above 4x, until Auto is restored.
 
 In the diagnostic build, `cine shutter` reads fresh live exposure telemetry in Auto. Capture sidecars
 record the automatic flag, AE target, sample validity and source. Auto's exposure

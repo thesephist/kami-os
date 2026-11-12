@@ -50,14 +50,16 @@ int main(){using namespace hal::camera;
  for(unsigned wb=1;wb<=4;++wb){request.wbMode=wb;assert(configureCineIsp(request,&output));for(unsigned c=0;c<3;++c)assert(output.wb[c]==expected[wb-1][c]);assert(registers[0x3406]==1);}
  for(unsigned wb:{0u,5u}){request.wbMode=wb;writes.clear();assert(!configureCineIsp(request,&output)&&writes.empty());}request.wbMode=1;
  for(unsigned us:{999u,100001u}){request.shutterUs=us;assert(!configureCineIsp(request,&output));}request.shutterUs=10000;
- for(unsigned g:{15u,65u}){request.gainQ4=g;assert(!configureCineIsp(request,&output));}request.gainQ4=16;
+ for(unsigned g:{15u,129u}){request.gainQ4=g;assert(!configureCineIsp(request,&output));}request.gainQ4=128;assert(configureCineIsp(request,&output)&&output.shutter.gainQ4==128);request.gainQ4=16;
  for(unsigned multiplier:{24u,30u}){registers[0x303b]=multiplier;uint32_t prior=0;for(auto us:core::cine::shutterSpeedsUs){request.shutterUs=us;assert(configureCineIsp(request,&output));assert(output.shutter.actualUs>prior&&output.shutter.actualUs<=100000);prior=output.shutter.actualUs;}}
  registers[0x303b]=24;request.autoExposure=true;request.autoVts=1564;assert(configureCineIsp(request,&output)&&!output.shutter.manual&&output.shutter.vts==1564&&output.shutter.requestedUs==0);
- assert((registers[0x3a00]&5)==0&&registers[0x3a18]==0&&registers[0x3a19]==64);
+ assert((registers[0x3a00]&5)==0&&registers[0x3a18]==0&&registers[0x3a19]==128);
  assert(registers[0x3a0f]==48&&registers[0x3a10]==41&&registers[0x3a1b]==48&&registers[0x3a1e]==41&&registers[0x3a11]==96&&registers[0x3a1f]==20);
  assert(((registers[0x3a02]<<8)|registers[0x3a03])==1560);
  regs=writes;for(auto reg:regs){auto before=registers;failRegister=reg;bool ok=configureCineIsp(request,&output);if(ok||registers!=before)fprintf(stderr,"rollback reg=%x ok=%d auto=%d\n",reg,ok,request.autoExposure);assert(!ok&&registers==before);}
- // WB changes preserve live sub-millisecond Auto exposure.
+ // WB changes preserve live sub-millisecond Auto exposure and gain above the old 4x cap.
+ registers[0x350b]=80;assert(configureCineIsp(request,&output)&&output.shutter.gainQ4==80);
+ registers[0x350b]=144;assert(configureCineIsp(request,&output)&&output.shutter.gainQ4==128);
  registers[0x3500]=0;registers[0x3501]=1;registers[0x3502]=0x23;request.wbMode=3;assert(configureCineIsp(request,&output)&&output.shutter.ticks==0x123&&!output.shutter.manual);
  for(auto bad:{1,2,3,4}){writes.clear();s_lastFb=bad==1?(void*)1:nullptr;s_detectedPid=bad==2?0x5640:0x3660;sensor.pixformat=bad==3?0:4;s_initialized=bad!=4;assert(!configureCineIsp(request,&output)&&writes.empty());}
 }
