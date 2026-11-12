@@ -225,3 +225,58 @@ Settings return, quantized 1/10s shutter, wheel-hold Auto restoration and sample
 A+B exit passed. The device was left at Home with the camera stopped. The
 retained runtime/build/test source matches the earlier 22-check baseline; no
 experimental compiler setting or decoder implementation remains.
+
+## Canonical pipeline and production instrumentation — November 12, 2026
+
+- Removed the legacy Cine RAW/binned/Stock/VGA pipelines, software looks and
+  metering, fitted/vendor-neutral/Filmic options, reference decoder,
+  resize/re-encoding benchmarks and RAW transport/stack hooks. The sole pipeline
+  remains continuous native 3MP sensor JPEG at quality 6, the exact selected sRGB
+  register approximation/vendor +1 matrix, four static WB presets and Auto/manual
+  exposure. JPEG DMA safety and camera ownership/freshness guards remain.
+- `./build.sh` builds production. `./build.sh --diagnostics` builds the same
+  pipeline with inspection, profiling, encoder trace and input cadence enabled.
+  The four capabilities default off and official release builds reject them.
+  Production link checks confirm the handlers, profiler, cadence and trace
+  storage are absent; both link maps pass the reviewed 84-archive SDK/TLS check.
+- Capture metadata uses schema v2: fixed profile, WB and exposure samples remain;
+  obsolete experiment fields and preview performance data are removed. Original
+  JPEG bytes still go directly to the shared Photos path. Metadata write failure
+  does not undo a saved photo.
+
+| Linked image | Static RAM | Flash usage |
+| --- | ---: | ---: |
+| Previous input-responsive baseline | 247,164 B | 5,355,761 B |
+| Canonical production | 223,364 B | 5,284,693 B |
+| Canonical diagnostic | 227,668 B | 5,290,553 B |
+
+Production saves **23,800 bytes of static RAM** and **71,068 bytes of flash**.
+These are linker measurements, not a guarantee of runtime contiguous DMA space
+or a controlled preview-speed comparison. The normal preview still samples
+buttons during decoding; freshness/exposure deadlines still use functional
+clocks even when optional profiling is absent.
+
+All 21 updated fork checks passed. Final targeted service checks passed with
+profiling off/on, including sub-millisecond Auto WB updates, gain normalization,
+failed-capture timing reset and teardown ownership under ASan/UBSan. The actual
+HAL transaction test covers both JPEG clocks, shutter quantization, all four WB
+presets, live Auto integration and register-by-register failure rollback. The
+fixed gamma bytes match the prior formula exactly. Capability tests cover each
+flag independently, invalid values and official-release rejection.
+
+Both images built, installed with verified rollback images and flash checksums,
+and booted normally without a reported panic; protected settings/partition
+metadata were unchanged. Diagnostic hardware checks passed WB cycling, both
+manual shutter endpoints, hold-to-Auto, settings return, trace/cadence tooling,
+a native 2048×1536 JPEG and valid sidecar, three reopens and Photos newest-first
+integration. Production repeated controls, capture, CRC-checked USB retrieval,
+metadata and gallery/reopen checks, while confirming the instrumentation commands
+were unavailable. USB maintenance remains available. The test harness waits for
+sampled C press/release and applied control state rather than assuming a USB
+command acknowledgement means the UI has already dispatched the event.
+
+The device was left at Home on the production image with the camera stopped.
+Private evidence, exact binaries and install records are in
+`.local/lab/.origami/artifacts/cine-canonical-cleanup-20261112/`. Production ELF/map
+symbols are hash-verified in `~/.cache/kami-os/firmware-symbols/<image-sha256>/`.
+No personal images or generated firmware are tracked in Git.

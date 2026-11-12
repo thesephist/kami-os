@@ -45,12 +45,24 @@ int main(){}
         ).returncode
         != 0
     )
-    assert (
-        subprocess.run(
-            base + ["-DORIGAMI_INPUT_TRACE=2"], capture_output=True
-        ).returncode
-        != 0
-    )
+    # Test the header's own rejection, independently of the positive assertions.
+    source.write_text('#include "config/diagnostics.h"\nint main(){}\n')
+    for name in [flag[2:-2] for flag in flags]:
+        assert (
+            subprocess.run(base + ["-D" + name + "=2"], capture_output=True).returncode
+            != 0
+        )
+        assert (
+            subprocess.run(base + ["-D" + name + "=1"], capture_output=True).returncode
+            == 0
+        )
+        assert (
+            subprocess.run(
+                base + ["-DOTA_BUILD_OFFICIAL=1", "-D" + name + "=1"],
+                capture_output=True,
+            ).returncode
+            != 0
+        )
 print(
     "PASS production instrumentation defaults off, explicit diagnostic capabilities and official-release/invalid-flag rejection"
 )
