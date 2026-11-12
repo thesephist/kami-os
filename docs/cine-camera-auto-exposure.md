@@ -23,7 +23,8 @@ AEC/AGC runs in the sensor, without per-preview I2C polling or userspace image
 analysis. Auto restores the session's original VTS after a slow manual exposure,
 keeps night-mode frame extension off, caps exposure at the shorter of native frame
 capacity and 100ms, and caps real gain at 4x. The native 3MP profile is therefore
-limited to approximately 75ms in Auto; manual can still reach 100ms. The gain
+bounded by approximately 75ms in Auto; the sensor's anti-flicker band limits can
+impose a lower effective maximum. Manual can still reach 100ms. The gain
 ceiling uses OV3660's Q4 real-gain register encoding (`0x40`), rather than the
 generic driver's gain-ceiling enum value.
 
