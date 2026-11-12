@@ -51,6 +51,12 @@ public:
   }
   void referencePreview(bool enabled); // Gated same-settings A/B diagnostic.
   bool usesReferencePreview() const { return referencePreview_; }
+  void nativePreview(bool enabled) { nativePreview_ = enabled; }
+  bool usesNativePreview() const { return nativePreview_; }
+  bool nativePreviewReady() const {
+    return nativePreview_ && !referencePreview_ && mode_ == Mode::Isp3Mp && nativeDecoder_ &&
+           nativePixels_ && !nativeUnavailable_;
+  }
   bool capture(bool saveRaw = false);
   bool benchmarkIspResize();
   bool benchmarkResolution();     // Gated same-held-RAW resolution experiment.
@@ -84,6 +90,11 @@ private:
   uint16_t *preview_ = nullptr;
   uint16_t *previewWork_ = nullptr;
   JPEGDEC *ispDecoder_ = nullptr;
+  void *nativeDecoder_ = nullptr;
+  uint16_t *nativePixels_ = nullptr;
+  bool nativePreview_ = true, nativeUnavailable_ = false;
+  bool renderNativePreview(const hal::camera::CameraFrame &, bool (*)(void *), void *);
+  void releaseNativePreview();
   size_t rawBytes_ = 0;
   unsigned width_ = 0, height_ = 0, outWidth_ = 512, outHeight_ = 384;
   Mode mode_ = Mode::RawBinned;

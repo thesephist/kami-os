@@ -398,10 +398,11 @@ bool handleSerialCommand(const char *line, Print &output) {
   if (!strcmp(line, "cine latency")) {
     const auto &s = session.status();
     output.printf("[cine] latency reference=%u frames=%u read_us=%lu render_us=%lu dma_age_us=%lu "
-                  "drawn_age_us=%lu interval_us=%lu\n",
+                  "drawn_age_us=%lu interval_us=%lu native=%u flush_us=%lu\n",
                   session.usesReferencePreview(), s.frames, (unsigned long)s.previewReadUs,
                   (unsigned long)s.previewUs, (unsigned long)s.previewAgeUs,
-                  (unsigned long)s.previewDrawAgeUs, (unsigned long)s.previewIntervalUs);
+                  (unsigned long)s.previewDrawAgeUs, (unsigned long)s.previewIntervalUs,
+                  session.nativePreviewReady(), (unsigned long)hal::display::lastFlushUs());
     return true;
   }
   if (!strncmp(line, "cine preview ", 13)) {
@@ -494,6 +495,16 @@ bool handleSerialCommand(const char *line, Print &output) {
     if (parseInteger(line + 14, -6, 6, target))
       session.adjustExposure(int(target) - session.parameters().exposureThirds);
     output.printf("[cine] bench exposure_thirds=%d\n", session.parameters().exposureThirds);
+    return true;
+  }
+  if (!strncmp(line, "cine bench decoder ", 19)) {
+    long enabled = 0;
+    if (!parseInteger(line + 19, 0, 1, enabled)) {
+      output.println("[cine-decoder] use bench decoder 0|1");
+      return true;
+    }
+    session.nativePreview(enabled != 0);
+    output.printf("[cine-decoder] native=%u\n", session.usesNativePreview());
     return true;
   }
   if (!strncmp(line, "cine bench input ", 17)) {
