@@ -104,7 +104,8 @@ void snap() {
 bool previewShouldAbort(void *) {
   // Match stock Camera: sample/enqueue only, never dispatch with a frame loan.
   const uint32_t now = millis();
-  if (uint32_t(now - lastInputSample) >= 8u) {
+  // Expander reads are synchronous I2C: keep taps responsive without delaying a frame.
+  if (uint32_t(now - lastInputSample) >= 20u) {
     lastInputSample = now;
     hal::input::service(now);
   }

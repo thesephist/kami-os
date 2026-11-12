@@ -10,7 +10,7 @@ stop decoding when a button is held. Cine previously waited until its native
 3MP preview read/decode/draw cycle completed. A short down/up pulse entirely
 between successful samples cannot enter the event queue at all.
 
-Cine now samples/enqueues input during JPEG decoding and RGB565 drawing, checks
+Cine now samples/enqueues input at 20ms intervals during JPEG decoding and RGB565 drawing, checks
 for held buttons before and after frame acquisition, and stops preview decoding
 when a button is held. Navigation/capture dispatch still happens in the normal
 main loop after the frame is returned. An interrupted decode never swaps the
