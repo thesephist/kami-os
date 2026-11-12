@@ -1,4 +1,6 @@
 #pragma once
+#include "config/diagnostics.h"
+#if ORIGAMI_INPUT_PROFILING
 #include "core/input_cadence.h"
 namespace hal {
 namespace input {
@@ -8,3 +10,5 @@ void startButtonCadence();
 core::input::Cadence::Snapshot buttonCadence(bool stop = false);
 } // namespace input
 } // namespace hal
+
+#endif

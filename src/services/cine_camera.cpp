@@ -9,65 +9,26 @@
 #include <esp_camera.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
-#include <img_converters.h>
-#include <new>
-#include <string.h>
+#include <stdio.h>
 namespace services {
 namespace cine_camera {
-namespace {
-constexpr size_t kRaw = 1024u * 768, kBgr = 640u * 480 * 3, kJpeg = 512u * 1024;
-void *allocate(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
-struct Sink {
-  explicit Sink(uint8_t *data) : p(data) {}
-  uint8_t *p;
-  size_t used = 0;
-};
-size_t output(void *arg, size_t index, const void *data, size_t n) {
-  auto &sink = *static_cast<Sink *>(arg);
-  core::watchdog::feed();
-  if (index != sink.used || sink.used > kJpeg || n > kJpeg - sink.used || (!data && n))
-    return 0;
-  if (n)
-    memcpy(sink.p + sink.used, data, n);
-  sink.used += n;
-  return n;
-}
-} // namespace
-bool isIsp(Mode mode) {
-  return mode == Mode::Stock || mode == Mode::Isp3Mp || mode == Mode::IspVga;
-}
-const char *modeName(Mode mode) {
-  return mode == Mode::RawNative ? "Cine RAW 3MP"
-         : mode == Mode::Isp3Mp  ? "Cine ISP 3MP"
-         : mode == Mode::IspVga  ? "Cine ISP VGA"
-         : mode == Mode::Stock   ? "Vanilla camera"
-                                 : "Fast RAW";
-}
-void Session::configure() {
-  if (tone_)
-    tone_->configure(params_);
-}
-bool Session::open(Mode mode, bool pattern) {
-  const uint64_t startupAt = esp_timer_get_time();
+#if ORIGAMI_CINE_PROFILING
+#define CINE_PROFILE(...) __VA_ARGS__
+#else
+#define CINE_PROFILE(...)
+#endif
+bool Session::open() {
+  CINE_PROFILE(const uint64_t startupAt = esp_timer_get_time();)
   if (!close(false))
     return false;
-  vendorGammaValid_ = false;
-  ispConfig_ = IspConfig{};
   autoFrameVts_ = 0;
-  ispConfigured_ = false;
+  configured_ = false;
   ispReadback_ = {};
-  status_ = Status{};
+  status_ = {};
   shutter_ = {};
   shutterReadyUs_ = 0;
-  mode_ = mode;
-  pattern_ = pattern;
-  outWidth_ = mode == Mode::RawNative ? 640 : 512;
-  outHeight_ = mode == Mode::RawNative ? 480 : 384;
-  params_ = core::cine::Parameters{};
-  params_.filmic = false;
-  params_.color = (isIsp(mode) || pattern) ? 0 : 2;
-  metering_ = {};
-  meterPending_ = !isIsp(mode) && !pattern;
+  wbPreset_ = WhiteBalance::Sunny;
+  CINE_PROFILE(profile_ = {};)
   if (!photo_print::readyForCapture()) {
     snprintf(status_.message, sizeof(status_.message), "Printer task still finishing");
     close();
@@ -84,116 +45,58 @@ bool Session::open(Mode mode, bool pattern) {
     return false;
   }
   hal::camera::Tuning tuning;
-  int frameSize = FRAMESIZE_VGA, format = PIXFORMAT_JPEG;
-  if (isIsp(mode)) {
-    vanilla_.load();
-    tuning = vanilla_.tuning();
-    if (mode == Mode::Isp3Mp)
-      frameSize = FRAMESIZE_QXGA;
-    if (mode != Mode::Stock) {
-      tuning = hal::camera::Tuning{};
-      tuning.wb_mode = 1;
-      tuning.ae_level = -1;
-      tuning.allowNightMode = false;
-    }
-    tuning.testPattern = pattern;
-    tuning.lenc = false;
-  } else {
-    tuning.bayer8 = true;
-    tuning.testPattern = pattern;
-    tuning.wb_mode = 1;
-    tuning.allowNightMode = false;
-    tuning.autofocus = false;
-    tuning.hmirror = false;
-    tuning.vflip = false;
-    frameSize = mode == Mode::RawNative ? FRAMESIZE_QXGA : FRAMESIZE_XGA;
-    format = PIXFORMAT_GRAYSCALE;
-  }
-  wbPreset_ = tuning.wb_mode;
-  status_.startupPrepareUs = uint32_t(esp_timer_get_time() - startupAt);
-  const uint64_t initAt = esp_timer_get_time();
-  if (!camera_.start(frameSize, format, &tuning,
-                     (mode == Mode::Isp3Mp || mode == Mode::IspVga) ? 6 : -1)) {
+  tuning.wb_mode = 1;
+  tuning.ae_level = core::cine::aeLevel;
+  tuning.allowNightMode = false;
+  tuning.lenc = false;
+  CINE_PROFILE(profile_.startupPrepareUs = uint32_t(esp_timer_get_time() - startupAt);)
+  CINE_PROFILE(const uint64_t initAt = esp_timer_get_time();)
+  if (!camera_.start(FRAMESIZE_QXGA, PIXFORMAT_JPEG, &tuning, 6)) {
     snprintf(status_.message, sizeof(status_.message), "Camera init failed: %s",
              camera_.lastError());
     close();
     return false;
   }
-  status_.startupInitUs = uint32_t(esp_timer_get_time() - initAt);
-  if (mode == Mode::Isp3Mp || mode == Mode::IspVga)
-    vendorGammaValid_ = hal::camera::readJpegGamma(vendorGamma_);
-  const auto info = hal::camera::rawInfo();
-  status_.raw = info.enabled;
-  if (!isIsp(mode) && !info.enabled) {
-    snprintf(status_.message, sizeof(status_.message), "RAW routing not verified");
-    close();
-    return false;
-  }
-  jpeg_ = isIsp(mode) ? nullptr : static_cast<uint8_t *>(allocate(kJpeg));
-  preview_ = static_cast<uint16_t *>(allocate(previewWidth * previewHeight * 2));
-  if (!isIsp(mode)) {
-    if (mode != Mode::RawNative)
-      raw_ = rawOwned_ = static_cast<uint8_t *>(allocate(kRaw));
-    bgr_ = static_cast<uint8_t *>(allocate(kBgr));
-    void *memory = allocate(sizeof(core::cine::ToneMap));
-    if (memory)
-      tone_ = new (memory) core::cine::ToneMap;
-    params_.black = info.black;
-    for (auto &gain : params_.gains)
-      gain = 1024;
-    configure();
-  }
-  if ((!isIsp(mode) && !jpeg_) || !preview_ ||
-      (!isIsp(mode) && ((mode != Mode::RawNative && !raw_) || !bgr_ || !preview_ || !tone_))) {
+  CINE_PROFILE(profile_.startupInitUs = uint32_t(esp_timer_get_time() - initAt);)
+  preview_ = static_cast<uint16_t *>(
+      heap_caps_malloc(previewWidth * previewHeight * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!preview_) {
     snprintf(status_.message, sizeof(status_.message), "Image buffer allocation failed");
     close();
     return false;
   }
   const uint64_t aeAt = esp_timer_get_time();
-  if (mode == Mode::Isp3Mp && !pattern) {
-    // Observe AE over distinct frames rather than always sleeping 1.1 seconds.
-    // Require three stable transitions and >=450ms; retain the old maximum.
-    hal::camera::ShutterInfo previous{};
-    unsigned stable = 0;
-    while (esp_timer_get_time() - aeAt < 1100000) {
-      hal::camera::CameraFrame frame{};
-      if (!camera_.read(&frame))
+  // Observe AE over distinct frames rather than always sleeping 1.1 seconds.
+  // Require three stable transitions and >=450ms; retain the old maximum.
+  hal::camera::ShutterInfo previous{};
+  unsigned stable = 0;
+  while (esp_timer_get_time() - aeAt < 1100000) {
+    hal::camera::CameraFrame frame{};
+    if (!camera_.read(&frame))
+      break;
+    camera_.returnFrame();
+    hal::camera::ShutterInfo value{};
+    if (hal::camera::readJpegShutter(&value) && value.valid) {
+      const uint64_t before = uint64_t(previous.actualUs) * previous.gainQ4,
+                     now = uint64_t(value.actualUs) * value.gainQ4;
+      const uint64_t difference = before > now ? before - now : now - before;
+      stable = before && difference * 100 <= before * 3 ? stable + 1 : 0;
+      previous = value;
+      if (stable >= 3 && esp_timer_get_time() - aeAt >= 450000) {
+        CINE_PROFILE(profile_.startupAeStable = true;)
         break;
-      camera_.returnFrame();
-      hal::camera::ShutterInfo value{};
-      if (hal::camera::readJpegShutter(&value) && value.valid) {
-        const uint64_t before = uint64_t(previous.actualUs) * previous.gainQ4,
-                       now = uint64_t(value.actualUs) * value.gainQ4;
-        const uint64_t difference = before > now ? before - now : now - before;
-        stable = before && difference * 100 <= before * 3 ? stable + 1 : 0;
-        previous = value;
-        if (stable >= 3 && esp_timer_get_time() - aeAt >= 450000) {
-          status_.startupAeStable = true;
-          break;
-        }
-      } else
-        stable = 0;
-    }
-  } else
-    camera_.settle(mode == Mode::RawNative ? 1100 : 700);
-  status_.startupAeUs = uint32_t(esp_timer_get_time() - aeAt);
-  if (!isIsp(mode) && !pattern) {
-    if (!camera_.lockRawShutter(&shutter_)) {
-      snprintf(status_.message, sizeof(status_.message), "Shutter control unavailable");
-      close();
-      return false;
-    }
-    // Discard transitional frames once at opening, never at the shutter button.
-    camera_.settle((shutter_.frameUs * 2 + 999) / 1000 + 30);
+      }
+    } else
+      stable = 0;
   }
-  const uint64_t ispAt = esp_timer_get_time();
+
+  CINE_PROFILE(profile_.startupAeUs = uint32_t(esp_timer_get_time() - aeAt);)
+  CINE_PROFILE(const uint64_t ispAt = esp_timer_get_time();)
   status_.open = true;
-  if ((mode == Mode::Isp3Mp || mode == Mode::IspVga) &&
-      !configureBaseline(16667, 16, true, !pattern))
+  if (!configureExposure(ExposureMode::Automatic, 16667, 16))
     return false;
-  status_.startupIspUs = uint32_t(esp_timer_get_time() - ispAt);
-  const uint64_t previewAt = esp_timer_get_time();
-  snprintf(status_.message, sizeof(status_.message), "C/RB: capture   Wheel: shutter");
+  CINE_PROFILE(profile_.startupIspUs = uint32_t(esp_timer_get_time() - ispAt);)
+  CINE_PROFILE(const uint64_t previewAt = esp_timer_get_time();)
   // Keep the two-frame freshness guard after ISP writes. Drain transitional
   // frames until an actual fresh preview is decoded, with a bounded deadline.
   bool first = false;
@@ -207,45 +110,24 @@ bool Session::open(Mode mode, bool pattern) {
     close();
     return false;
   }
-  status_.startupPreviewUs = uint32_t(esp_timer_get_time() - previewAt);
-  status_.startupUs = uint32_t(esp_timer_get_time() - startupAt);
-  Serial.printf("[cine-startup] total_us=%lu prepare_us=%lu init_us=%lu ae_us=%lu isp_us=%lu "
-                "first_preview_us=%lu ae_stable=%u\n",
-                (unsigned long)status_.startupUs, (unsigned long)status_.startupPrepareUs,
-                (unsigned long)status_.startupInitUs, (unsigned long)status_.startupAeUs,
-                (unsigned long)status_.startupIspUs, (unsigned long)status_.startupPreviewUs,
-                status_.startupAeStable);
+
+  CINE_PROFILE(profile_.startupPreviewUs = uint32_t(esp_timer_get_time() - previewAt);
+               profile_.startupUs = uint32_t(esp_timer_get_time() - startupAt);)
   return true;
 }
 bool Session::close(bool restoreUi) {
   status_.open = false;
-  cacheReady_ = false;
   camera_.returnFrame();
-  frameHeld_ = false;
   camera_.stop();
-  // A failed I2C teardown still owns the driver/DMA. Retain buffers and the
-  // peripheral reservation until a later close/open can complete teardown.
+  // Failed teardown retains ownership and allocations until a safe retry.
   if (camera_.running()) {
     snprintf(status_.message, sizeof(status_.message), "Camera cleanup pending; retry");
     return false;
   }
   releaseIspPreview();
-  if (tone_) {
-    tone_->~ToneMap();
-    heap_caps_free(tone_);
-    tone_ = nullptr;
-  }
-  heap_caps_free(rawOwned_);
-  rawOwned_ = nullptr;
-  heap_caps_free(bgr_);
-  heap_caps_free(jpeg_);
   heap_caps_free(preview_);
-  cacheReady_ = false;
-  cachedFrameUs_ = lastPreviewDoneUs_ = 0;
-  referencePreview_ = retainPreviewRaw_ = false;
-  raw_ = bgr_ = jpeg_ = nullptr;
   preview_ = nullptr;
-  rawBytes_ = 0;
+  CINE_PROFILE(cachedFrameUs_ = lastPreviewDoneUs_ = 0;)
   if (restoreUi)
     camera_.restoreUi(camera::Session::Resume::DeferredWithInputRecovery);
   return true;
@@ -259,124 +141,47 @@ bool Session::preview(bool (*shouldAbort)(void *), void *context) {
     return false;
   }
   hal::camera::CameraFrame frame{};
-  if (frameHeld_) {
-    camera_.returnFrame();
-    frameHeld_ = false;
-    raw_ = nullptr;
-  }
-  const uint64_t readStarted = esp_timer_get_time();
+  CINE_PROFILE(const uint64_t readAt = esp_timer_get_time();)
   if (!camera_.read(&frame))
     return false;
-  status_.previewReadUs = uint32_t(esp_timer_get_time() - readStarted);
+  CINE_PROFILE(profile_.previewReadUs = uint32_t(esp_timer_get_time() - readAt);)
   if (shouldAbort && shouldAbort(context)) {
     camera_.returnFrame();
     status_.previewInterrupted = true;
     return false;
   }
-  if (shutterReadyUs_ && frame.dmaStartUs < shutterReadyUs_) {
+  if (frame.dmaStartUs < shutterReadyUs_) {
     camera_.returnFrame();
     return false;
   }
-  bool ok = false;
-  if (isIsp(mode_)) {
-    ok = frame.format == PIXFORMAT_JPEG &&
-         core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height,
-                               mode_ == Mode::Isp3Mp ? 2048 : 640,
-                               mode_ == Mode::Isp3Mp ? 1536 : 480);
-    if (ok) {
-      width_ = frame.width;
-      height_ = frame.height;
-      const uint64_t at = esp_timer_get_time();
-      ok = renderIspPreview(frame, shouldAbort, context);
-      if (ok)
-        cachedFrameUs_ = frame.dmaStartUs;
-      status_.previewUs = uint32_t(esp_timer_get_time() - at);
-    }
-  } else {
-    const bool full = mode_ == Mode::RawNative;
-    ok = frame.buf && frame.format == PIXFORMAT_RAW && frame.width == (full ? 2048 : 1024) &&
-         frame.height == (full ? 1536 : 768) && frame.len == (full ? 3145728 : kRaw);
-    if (ok) {
-      if (full) {
-        raw_ = const_cast<uint8_t *>(frame.buf);
-        frameHeld_ = true;
-      } else
-        memcpy(raw_, frame.buf, frame.len);
-      rawBytes_ = frame.len;
-      width_ = frame.width;
-      height_ = frame.height;
-      cachedFrameUs_ = frame.dmaStartUs;
-    }
-    if (!frameHeld_)
-      camera_.returnFrame();
-    if (ok && meterPending_) {
-      const uint64_t started = esp_timer_get_time();
-      metering_ = core::cine::meterBayer(raw_, rawBytes_, width_, height_, params_.black);
-      status_.meterUs = uint32_t(esp_timer_get_time() - started);
-      meterPending_ = false;
-      params_.exposureThirds = metering_.exposureThirds;
-      configure();
-    }
-    const bool direct = full && !referencePreview_;
-    if (ok) {
-      const uint64_t began = esp_timer_get_time();
-      ok = direct ? tone_->preview565(raw_, rawBytes_, width_, height_, preview_, previewWidth,
-                                      previewHeight)
-                  : renderRaw();
-      status_.previewUs = uint32_t(esp_timer_get_time() - began);
-    }
-    if (ok && !direct) {
-      for (unsigned y = 0; y < previewHeight; ++y)
-        for (unsigned x = 0; x < previewWidth; ++x) {
-          const size_t i =
-              (size_t(y * outHeight_ / previewHeight) * outWidth_ + x * outWidth_ / previewWidth) *
-              3;
-          const uint8_t b = bgr_[i], g = bgr_[i + 1], r = bgr_[i + 2];
-          preview_[y * previewWidth + x] = uint16_t((r >> 3) << 11 | (g >> 2) << 5 | (b >> 3));
-        }
-    }
-    cacheReady_ = ok;
-    // Let the single DMA buffer refill while the UI composes the display and
-    // handles input. Holding it until the next tick can miss a sensor VSYNC.
-    if (direct && !pattern_ && !retainPreviewRaw_ && frameHeld_) {
-      camera_.returnFrame();
-      frameHeld_ = false;
-      raw_ = nullptr;
-      cacheReady_ = false;
-    }
-    if (ok) {
-      ++status_.frames;
-      const uint64_t done = esp_timer_get_time();
-      status_.previewAgeUs = done >= cachedFrameUs_ ? uint32_t(done - cachedFrameUs_) : 0;
-      status_.previewIntervalUs = lastPreviewDoneUs_ ? uint32_t(done - lastPreviewDoneUs_) : 0;
-      lastPreviewDoneUs_ = done;
-    } else
-      snprintf(status_.message, sizeof(status_.message), "Unexpected sensor frame format");
-    return ok;
+  bool ok = frame.format == PIXFORMAT_JPEG &&
+            core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height, 2048, 1536);
+  if (ok) {
+    CINE_PROFILE(const uint64_t at = esp_timer_get_time();)
+    ok = renderIspPreview(frame, shouldAbort, context);
+    CINE_PROFILE(profile_.previewUs = uint32_t(esp_timer_get_time() - at);
+                 if (ok) cachedFrameUs_ = frame.dmaStartUs;)
   }
   camera_.returnFrame();
   if (ok) {
-    ++status_.frames;
-    const uint64_t done = esp_timer_get_time();
-    status_.previewAgeUs = done >= cachedFrameUs_ ? uint32_t(done - cachedFrameUs_) : 0;
-    status_.previewIntervalUs = lastPreviewDoneUs_ ? uint32_t(done - lastPreviewDoneUs_) : 0;
-    lastPreviewDoneUs_ = done;
+    CINE_PROFILE(
+        ++profile_.frames; const uint64_t done = esp_timer_get_time();
+        profile_.previewAgeUs = done >= cachedFrameUs_ ? uint32_t(done - cachedFrameUs_) : 0;
+        profile_.previewIntervalUs = lastPreviewDoneUs_ ? uint32_t(done - lastPreviewDoneUs_) : 0;
+        lastPreviewDoneUs_ = done;)
   } else if (!status_.previewInterrupted)
     snprintf(status_.message, sizeof(status_.message), "Unexpected sensor frame format");
   return ok;
 }
+#if ORIGAMI_CINE_PROFILING
 void Session::previewDrawn() {
   const uint64_t now = esp_timer_get_time();
   if (cachedFrameUs_ && now >= cachedFrameUs_)
-    status_.previewDrawAgeUs = uint32_t(now - cachedFrameUs_);
+    profile_.previewDrawAgeUs = uint32_t(now - cachedFrameUs_);
 }
-void Session::referencePreview(bool enabled) {
-  referencePreview_ = enabled;
-  cacheReady_ = false;
-  lastPreviewDoneUs_ = 0;
-}
+#endif
 void Session::adjustShutter(int delta) {
-  if (mode_ == Mode::Stock || pattern_ || !status_.open || !shutter_.valid || !delta)
+  if (!status_.open || !shutter_.valid || !delta)
     return;
   // Sample the live hardware result only when handing control to the wheel.
   // Continuous metering itself runs in the sensor; no per-preview I2C polling.
@@ -395,112 +200,29 @@ void Session::adjustShutter(int delta) {
     next = core::cine::shutterCount - 1;
   if (!automatic && next == step && shutter_.requestedUs == core::cine::shutterSpeedsUs[next])
     return;
-  if (frameHeld_) {
-    camera_.returnFrame();
-    frameHeld_ = false;
-    raw_ = nullptr;
-  }
-  cacheReady_ = false;
-  if (isIsp(mode_)) {
-    configureBaseline(core::cine::shutterSpeedsUs[next], shutter_.gainQ4);
-    return;
-  }
-  if (!camera_.setRawShutter(core::cine::shutterSpeedsUs[next], &shutter_)) {
-    shutter_.valid = false;
-    snprintf(status_.message, sizeof(status_.message), "Shutter update failed; reopen camera");
-    return;
-  }
-  shutterReadyUs_ = esp_timer_get_time() + uint64_t(shutter_.frameUs) * 2;
-  status_.saved = false;
+  configureExposure(ExposureMode::Manual, core::cine::shutterSpeedsUs[next], shutter_.gainQ4);
 }
-void Session::adjustExposure(int delta) {
-  if (isIsp(mode_))
-    return;
-  int64_t ev = int64_t(params_.exposureThirds) + delta;
-  params_.exposureThirds = ev < -6 ? -6 : ev > 6 ? 6 : ev;
-  cacheReady_ = false;
-  configure();
-}
-void Session::remeter() {
-  if (isIsp(mode_) || pattern_)
-    return;
-  meterPending_ = true;
-  cacheReady_ = false;
-}
-void Session::setFilmic(bool enabled) {
-  if (isIsp(mode_) || pattern_)
-    return;
-  params_.filmic = enabled;
-  cacheReady_ = false;
-  configure();
-}
-bool Session::renderRaw() {
-  return mode_ == Mode::RawNative ? tone_->renderBgrArea(raw_, rawBytes_, width_, height_, bgr_,
-                                                         kBgr, outWidth_, outHeight_)
-                                  : tone_->renderBgr(raw_, rawBytes_, width_, height_, bgr_, kBgr);
-}
-bool Session::verifyPattern() const {
-  if (!pattern_ || !raw_ || rawBytes_ != size_t(width_) * height_)
-    return false;
-  for (unsigned y = 2; y < height_; ++y)
-    if (memcmp(raw_ + size_t(y) * width_, raw_ + size_t(y & 1) * width_, width_)) {
-      Serial.printf("[cine-pattern] mismatch_row=%u\n", y);
-      return false;
-    }
-  return true;
-}
-bool Session::saveRender(const char *path, bool reuse) {
-  uint64_t at = esp_timer_get_time();
-  if (!reuse) {
-    if (!renderRaw())
-      return false;
-    status_.toneUs += uint32_t(esp_timer_get_time() - at);
-  }
-  at = esp_timer_get_time();
-  Sink sink{jpeg_};
-  if (!fmt2jpg_cb(bgr_, size_t(outWidth_) * outHeight_ * 3, outWidth_, outHeight_, PIXFORMAT_RGB888,
-                  90, output, &sink))
-    return false;
-  status_.encodeUs += uint32_t(esp_timer_get_time() - at);
-  at = esp_timer_get_time();
-  const bool ok = hal::sd::writeFile(path, jpeg_, sink.used);
-  status_.saveUs += uint32_t(esp_timer_get_time() - at);
-  if (!ok)
-    hal::sd::removeFile(path);
-  return ok;
-}
-bool Session::capture(bool saveRaw) {
+bool Session::capture() {
   if (!status_.open)
     return false;
   const uint64_t started = esp_timer_get_time();
-  if (mode_ != Mode::Stock && !pattern_ && (!shutter_.valid || started < shutterReadyUs_)) {
+  if (!shutter_.valid || started < shutterReadyUs_) {
     snprintf(status_.message, sizeof(status_.message),
              shutter_.valid ? "Updating shutter; wait for preview"
                             : "Reopen camera for shutter control");
     return false;
   }
   status_.saved = false;
-  status_.toneUs = status_.encodeUs = status_.saveUs = status_.frameUs = 0;
-  status_.cinePath[0] = status_.neutralPath[0] = status_.rawPath[0] = 0;
+  status_.photoPath[0] = status_.metadataPath[0] = 0;
   auto target = photos::prepare();
   if (!target.valid()) {
     snprintf(status_.message, sizeof(status_.message), "Could not create photo");
     return false;
   }
   status_.sequence = target.sequence;
-  const bool cached = !isIsp(mode_) && cacheReady_ && started >= int64_t(cachedFrameUs_) &&
-                      uint64_t(started) - cachedFrameUs_ <= 500000;
-  status_.zeroShutterLag = cached;
-  status_.frameAgeUs = cached ? uint32_t(started - cachedFrameUs_) : 0;
   hal::camera::CameraFrame frame{};
-  bool acquired = cached;
-  if (!cached && frameHeld_) {
-    camera_.returnFrame();
-    frameHeld_ = false;
-    raw_ = nullptr;
-  }
-  // Discard only stale queued frames; no sensor restart or AE/AWB retuning at shutter time.
-  for (unsigned i = 0; !cached && i < 4; ++i) {
+  bool acquired = false;
+  for (unsigned i = 0; i < 4; ++i) {
     core::watchdog::feed();
     if (!camera_.read(&frame))
       break;
@@ -510,148 +232,52 @@ bool Session::capture(bool saveRaw) {
     }
     camera_.returnFrame();
   }
-  status_.frameUs = cached ? 0 : uint32_t(esp_timer_get_time() - started);
+  CINE_PROFILE(profile_.frameUs = uint32_t(esp_timer_get_time() - started);)
   if (!acquired) {
     snprintf(status_.message, sizeof(status_.message), "Fresh sensor frame unavailable");
     return false;
   }
-  // These are live sensor values sampled near frame receipt, not embedded
-  // per-frame exposure metadata. Do not report the old startup/manual sample.
-  const bool exposureSampleValid = autoExposure() ? refreshExposure() : shutter_.valid;
-  const auto captureExposure = exposureSampleValid ? shutter_ : hal::camera::ShutterInfo{};
-  bool ok = false;
-  if (isIsp(mode_)) {
-    const uint64_t at = esp_timer_get_time();
-    ok = frame.format == PIXFORMAT_JPEG &&
-         core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height,
-                               mode_ == Mode::Isp3Mp ? 2048 : 640,
-                               mode_ == Mode::Isp3Mp ? 1536 : 480) &&
-         photos::write(target, frame.buf, frame.len);
-    width_ = frame.width;
-    height_ = frame.height;
-    camera_.returnFrame();
-    status_.saveUs = uint32_t(esp_timer_get_time() - at);
-    snprintf(status_.neutralPath, sizeof(status_.neutralPath), "%s", target.path);
-  } else {
-    const bool full = mode_ == Mode::RawNative;
-    ok = cached ||
-         (frame.buf && frame.format == PIXFORMAT_RAW && frame.len == (full ? 3145728 : kRaw) &&
-          frame.width == (full ? 2048 : 1024) && frame.height == (full ? 1536 : 768));
-    if (ok && !cached) {
-      if (full) {
-        raw_ = const_cast<uint8_t *>(frame.buf);
-        frameHeld_ = true;
-      } else
-        memcpy(raw_, frame.buf, frame.len);
-      rawBytes_ = frame.len;
-      width_ = frame.width;
-      height_ = frame.height;
-      cachedFrameUs_ = frame.dmaStartUs;
-    }
-    if (!cached && !frameHeld_)
-      camera_.returnFrame();
-    if (ok) {
-      snprintf(status_.cinePath, sizeof(status_.cinePath), "%s", target.path);
-      ok = saveRender(target.path, cached && mode_ == Mode::RawBinned);
-    }
-    if (ok && saveRaw) {
-      snprintf(status_.rawPath, sizeof(status_.rawPath), "/cine/RAW_%05lu.bayer",
-               (unsigned long)status_.sequence);
-      ok = hal::sd::writeFile(status_.rawPath, raw_, rawBytes_);
-    }
-    if (!ok)
-      configure();
-    cacheReady_ = false;
-  }
-  status_.totalUs = uint32_t(esp_timer_get_time() - started);
+  const bool sampleValid = autoExposure() ? refreshExposure() : shutter_.valid;
+  const auto exposure = sampleValid ? shutter_ : hal::camera::ShutterInfo{};
+  CINE_PROFILE(const uint64_t saveAt = esp_timer_get_time();)
+  const bool ok =
+      frame.format == PIXFORMAT_JPEG &&
+      core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height, 2048, 1536) &&
+      photos::write(target, frame.buf, frame.len);
+  camera_.returnFrame();
+  CINE_PROFILE(profile_.saveUs = uint32_t(esp_timer_get_time() - saveAt);
+               profile_.totalUs = uint32_t(esp_timer_get_time() - started);)
   status_.saved = ok;
+  snprintf(status_.photoPath, sizeof(status_.photoPath), "%s", target.path);
   snprintf(status_.metadataPath, sizeof(status_.metadataPath), "/cine/SHOT_%05lu.json",
            (unsigned long)status_.sequence);
-  auto sensorInfo = hal::camera::rawInfo();
-  if (ispConfigured_ && ispReadback_.valid)
-    for (unsigned c = 0; c < 3; ++c)
-      sensorInfo.gains[c] = ispReadback_.wb[c];
-  char aeLevel[8] = "null";
-  if (autoExposure())
-    snprintf(aeLevel, sizeof(aeLevel), "%d", int(ispConfig_.aeLevel));
-  char metadata[2400];
-  const int n = snprintf(
-      metadata, sizeof(metadata),
-      "{\"version\":1,\"mode\":\"%s\",\"source\":\"%s\",\"bayer\":\"%s\",\"bits\":%u,\"output_"
-      "width\":%u,\"output_height\":%u,\"reconstruction\":\"%s\",\"raw_width\":%u,\"raw_height\":%"
-      "u,\"black\":%u,\"wb_q10\":[%u,%u,%u],\"sensor_wb_q10\":[%u,%u,%u],\"preview_render_us\":%lu,"
-      "\"preview_path\":\"%s\",\"preview_dma_age_us\":%lu,\"preview_draw_age_us\":%lu,\"preview_"
-      "interval_us\":%lu,\"color_profile\":\"%s\",\"color_version\":%u,\"color_domain\":\"%s\","
-      "\"relative_wb_rgb\":%s,\"wb_preset\":%u,\"reference_profile\":\"%s\",\"shutter\":{"
-      "\"sample_valid\":%s,\"sample_source\":\"%s\",\"automatic\":%s,\"ae_level\":%s,"
-      "\"manual\":%s,\"requested_us\":%lu,\"actual_us\":%lu,\"integration_ticks_q4\":%lu,\"gain_"
-      "q4\":%u,\"hts\":%u,\"vts\":%u,\"clock_hz\":%lu},\"isp_experiment\":%d,\"isp_fitted_matrix\":"
-      "%s,\"isp_vendor_saturation\":%d,\"software_filmic\":%s,\"tone_version\":2,\"exposure_"
-      "thirds\":%d,\"meter\":{\"method\":\"%s\",\"valid\":%s,\"samples\":%u,\"auto_thirds\":%d,"
-      "\"ec_thirds\":%d,\"geometric_mean\":%.6f,\"arithmetic_mean\":%.6f,\"highlight_p98\":%.6f,"
-      "\"highlight_limited\":%s,\"time_us\":%lu},\"look\":\"%s\",\"zero_shutter_lag\":%s,\"frame_"
-      "age_us\":%lu,\"software_mirror\":%s,\"pattern\":%s,\"cine\":\"%s\",\"neutral\":\"%s\","
-      "\"raw\":\"%s\",\"timing_us\":{\"frame\":%lu,\"tone\":%lu,\"encode\":%lu,\"save\":%lu,"
-      "\"total\":%lu},\"vanilla_profile\":%u,\"saved\":%s}",
-      modeName(mode_), status_.raw ? "OV3660 RAW after DPC" : "sensor ISP JPEG",
-      status_.raw ? "BGGR" : "none", status_.raw ? 8 : 0, status_.raw ? outWidth_ : width_,
-      status_.raw ? outHeight_ : height_,
-      mode_ == Mode::RawNative ? "Bayer cells + linear Q12 area before tone" : "native", width_,
-      height_, params_.black, params_.gains[0], params_.gains[1], params_.gains[2],
-      sensorInfo.gains[0], sensorInfo.gains[1], sensorInfo.gains[2],
-      (unsigned long)status_.previewUs,
-      isIsp(mode_)                                     ? "scaled JPEG IDCT to RGB565"
-      : mode_ == Mode::RawNative && !referencePreview_ ? "direct Bayer cell to RGB565"
-                                                       : "full output then scale",
-      (unsigned long)status_.previewAgeUs, (unsigned long)status_.previewDrawAgeUs,
-      (unsigned long)status_.previewIntervalUs,
-      isIsp(mode_) ? "sensor-ISP" : core::cine::colorName(params_.color),
-      params_.color == 2 ? 2u : 1u,
-      isIsp(mode_)         ? "sensor-ISP"
-      : params_.color == 2 ? "display-sRGB"
-                           : "scene-linear",
-      !isIsp(mode_) && params_.color == 1 ? "[0.92,1.0,1.12]" : "[1.0,1.0,1.0]", wbPreset_, "none",
-      exposureSampleValid ? "true" : "false",
-      autoExposure()        ? "live-after-frame"
-      : exposureSampleValid ? "locked"
-                            : "unavailable",
-      autoExposure() ? "true" : "false", aeLevel,
-      captureExposure.valid && captureExposure.manual ? "true" : "false",
-      (unsigned long)captureExposure.requestedUs, (unsigned long)captureExposure.actualUs,
-      (unsigned long)captureExposure.ticks, captureExposure.gainQ4, captureExposure.hts,
-      captureExposure.vts, (unsigned long)captureExposure.clockHz,
-      ispConfigured_ ? int(ispConfig_.gamma) : -1,
-      (ispConfigured_ && ispConfig_.matrix == ColorMatrix::FittedDiagnostic) ? "true" : "false",
-      ispConfigured_ && ispConfig_.matrix != ColorMatrix::FittedDiagnostic
-          ? (ispConfig_.matrix == ColorMatrix::VendorSaturated ? 1 : 0)
-          : -1,
-      (!isIsp(mode_) && params_.filmic) ? "true" : "false", params_.exposureThirds,
-      isIsp(mode_) || pattern_ ? "none" : "trimmed-log-mean-startup",
-      metering_.valid ? "true" : "false", metering_.samples, metering_.exposureThirds,
-      int(params_.exposureThirds) - metering_.exposureThirds, metering_.geometricMean,
-      metering_.arithmeticMean, metering_.highlight, metering_.highlightLimited ? "true" : "false",
-      (unsigned long)status_.meterUs,
-      (params_.filmic ? core::cine::lookName(params_.look) : "sRGB"), cached ? "true" : "false",
-      (unsigned long)status_.frameAgeUs, status_.raw ? "true" : "false",
-      pattern_ ? "true" : "false", status_.cinePath, status_.neutralPath, status_.rawPath,
-      (unsigned long)status_.frameUs, (unsigned long)status_.toneUs,
-      (unsigned long)status_.encodeUs, (unsigned long)status_.saveUs,
-      (unsigned long)status_.totalUs, unsigned(vanilla_.mode), ok ? "true" : "false");
+  char metadata[1200];
+  const int n = snprintf(metadata, sizeof(metadata),
+                         "{\"version\":2,\"mode\":\"Cine ISP 3MP\",\"source\":\"sensor ISP "
+                         "JPEG\",\"output_width\":2048,\"output_height\":1536,"
+                         "\"color_profile\":\"sensor-ISP\",\"gamma\":\"sRGB "
+                         "approximation\",\"vendor_saturation\":1,\"wb_preset\":%u,"
+                         "\"shutter\":{\"sample_valid\":%s,\"sample_source\":\"%s\",\"automatic\":%"
+                         "s,\"ae_level\":%s,\"manual\":%s,"
+                         "\"requested_us\":%lu,\"actual_us\":%lu,\"integration_ticks_q4\":%lu,"
+                         "\"gain_q4\":%u,\"hts\":%u,\"vts\":%u,\"clock_hz\":%lu},\"saved\":%s}",
+                         unsigned(wbPreset_), sampleValid ? "true" : "false",
+                         autoExposure() ? "live-after-frame"
+                         : sampleValid  ? "locked"
+                                        : "unavailable",
+                         autoExposure() ? "true" : "false", autoExposure() ? "-1" : "null",
+                         exposure.valid && exposure.manual ? "true" : "false",
+                         (unsigned long)exposure.requestedUs, (unsigned long)exposure.actualUs,
+                         (unsigned long)exposure.ticks, exposure.gainQ4, exposure.hts, exposure.vts,
+                         (unsigned long)exposure.clockHz, ok ? "true" : "false");
   const bool metadataOk =
       n > 0 && size_t(n) < sizeof(metadata) &&
       hal::sd::writeFile(status_.metadataPath, reinterpret_cast<const uint8_t *>(metadata), n);
   snprintf(status_.message, sizeof(status_.message),
-           ok ? (metadataOk ? "Saved %lu ms | view %lu ms old" : "Photo saved; metadata failed")
-              : "Save failed; partial files retained",
-           (unsigned long)(status_.totalUs / 1000), (unsigned long)(status_.frameAgeUs / 1000));
-  Serial.printf("[cine] saved=%u mode=%s sequence=%lu frame_us=%lu tone_us=%lu encode_us=%lu "
-                "save_us=%lu total_us=%lu cine=%s neutral=%s raw=%s meta=%s\n",
-                ok, modeName(mode_), (unsigned long)status_.sequence,
-                (unsigned long)status_.frameUs, (unsigned long)status_.toneUs,
-                (unsigned long)status_.encodeUs, (unsigned long)status_.saveUs,
-                (unsigned long)status_.totalUs, status_.cinePath, status_.neutralPath,
-                status_.rawPath, status_.metadataPath);
+           ok ? (metadataOk ? "Photo saved" : "Photo saved; metadata failed")
+              : "Save failed; partial files retained");
   return ok;
 }
+#undef CINE_PROFILE
 } // namespace cine_camera
 } // namespace services

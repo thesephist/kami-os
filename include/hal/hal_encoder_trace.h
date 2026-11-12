@@ -1,10 +1,11 @@
 #pragma once
+#include "config/diagnostics.h"
 #include "core/encoder_trace.h"
 namespace hal { namespace input {
 using TraceKind=core::rotary::TraceKind;
 // UI task only, except the HAL's locked ISR writer. No serial I/O in capture.
 // Menu observations apply to shared ListView; route absence is not a menu result.
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
+#if ORIGAMI_INPUT_TRACE
 void encoderTrace(TraceKind kind,uint32_t event=0,int a=0,int b=0,int c=0,int d=0);
 void encoderTraceContext(uint32_t event);
 void encoderTraceMenu(int before,int after,int total,int delta);

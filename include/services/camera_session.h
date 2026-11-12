@@ -74,9 +74,7 @@ public:
     void stop();
     bool running() const;
     void settle(uint32_t milliseconds);
-    bool configureIspExperiment(const hal::camera::IspExperiment& request,hal::camera::IspReadback* output);
-    bool lockRawShutter(hal::camera::ShutterInfo* out);
-    bool setRawShutter(uint32_t microseconds,hal::camera::ShutterInfo* out);
+    bool configureCineIsp(const hal::camera::CineIspRequest& request,hal::camera::CineIspReadback* output);
     bool read(hal::camera::CameraFrame* frame);
     void returnFrame();
     bool captureToFile(const char* path);

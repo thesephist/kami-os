@@ -5,4 +5,9 @@ KAMI_REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 export PLATFORMIO_CORE_DIR
 KAMI_PYTHON=${KAMI_PYTHON:-"$KAMI_REPO_ROOT/.venv/bin/python"}
 cd "$KAMI_REPO_ROOT"
-exec "$KAMI_PYTHON" -m platformio run -e esp32-s3-menu-n16r8-production "$@"
+KAMI_BUILD_ENV=esp32-s3-menu-n16r8-production
+if [ "${1:-}" = --diagnostics ]; then
+  KAMI_BUILD_ENV=esp32-s3-menu-n16r8-diagnostics
+  shift
+fi
+exec "$KAMI_PYTHON" -m platformio run -e "$KAMI_BUILD_ENV" "$@"

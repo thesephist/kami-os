@@ -13,13 +13,12 @@
 #include "core/telemetry.h"
 #include "camera_event_diagnostics.h"
 #include "core/cine_shutter.h"
+#include "core/cine_isp.h"
 
 namespace hal {
 namespace camera {
 
 static bool s_initialized = false;
-static RawInfo s_rawInfo;
-RawInfo rawInfo(){return s_rawInfo;}
 static uint16_t s_detectedPid = 0;
 bool supportsAutofocus() { return s_detectedPid == 0x5640; }
 static camera_fb_t* s_lastFb = nullptr;
@@ -230,7 +229,6 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
    * SCCB borrows the already-installed accessory-I²C controller, so this
    * configuration and later Wire1 autofocus operations share the same bus.
    */
-  s_rawInfo=RawInfo{};
   Tuning effective = tuning ? *tuning : Tuning{};
   bool tuningOk = applyTuningInternal(effective);
   sensor_t* detectedSensor = esp_camera_sensor_get();
@@ -345,8 +343,7 @@ void deinit() {
     cameraEventFinish();
 #endif
     s_initialized = false;
-    s_rawInfo=RawInfo{};
-  }
+    }
   
   // Power down camera
   hal::io::setCameraPwdn(true);
@@ -372,7 +369,7 @@ bool getFrame(CameraFrame* out) {
   out->len = s_lastFb->len;
   out->width = s_lastFb->width;
   out->height = s_lastFb->height;
-  out->format = s_rawInfo.enabled ? PIXFORMAT_RAW : s_lastFb->format;
+  out->format = s_lastFb->format;
   out->dmaStartUs = (uint64_t)s_lastFb->timestamp.tv_sec * 1000000ULL +
                    (uint64_t)s_lastFb->timestamp.tv_usec;
   return true;
@@ -532,36 +529,7 @@ static bool applyTuningInternal(const Tuning& t) {
   Serial.printf("[camera] orientation hmirror=%d vflip=%d\n",
                 t.hmirror ? 1 : 0, t.vflip ? 1 : 0);
 
-  if(t.bayer8){
-    // Driver one-byte GRAYSCALE DMA is byte-preserving on OV3660. Route the
-    // sensor to Bayer *after* initial driver setup; the transport is not Y8.
-    // XGA uses native 2x binning with no ISP scaling, preserving Bayer phase.
-    if(s->id.PID!=0x3660 || (s->status.framesize!=FRAMESIZE_XGA&&s->status.framesize!=FRAMESIZE_QXGA) || s->status.scale)return false;
-    bool ok=s->set_pixformat(s,PIXFORMAT_RAW)==0 &&
-      s->set_reg(s,0x501f,7,3)==0 && s->set_reg(s,0x4300,255,0)==0 &&
-      s->set_reg(s,0x5000,0xa1,0)==0; // no LENC, gamma or color interpolation; retain DPC/BLC
-    s->set_colorbar(s,t.testPattern?1:0);
-    if(t.testPattern)ok=ok&&s->set_reg(s,0x503d,255,0x80)==0; // static bars; vendor helper enables a rolling invert bar too
-    const int route=s->get_reg(s,0x501f,7),fmt=s->get_reg(s,0x4300,255),isp=s->get_reg(s,0x5000,255);
-    ok=ok&&route==3&&fmt==0&&isp>=0&&!(isp&0xa1);
-    if(s->status.framesize==FRAMESIZE_QXGA){
-      // Same supported PLL family as the driver's raw presets. At external
-      // 24 MHz this doubles native RAW SYSCLK/PCLK from 12 to 24 MHz; validate
-      // complete static-pattern frames on hardware before accepting real photos.
-      const int pll=s->set_pll?s->set_pll(s,false,8,1,0,false,2,true,2):-1;
-      ok=ok&&pll==0;Serial.printf("[cine-native-clock] result=%d target_pclk_mhz=24\n",pll);
-    }
-    const int binX=s->get_reg(s,0x3821,1),binY=s->get_reg(s,0x3820,1);
-    const int expectedBin=s->status.framesize==FRAMESIZE_XGA?1:0;
-    ok=ok&&binX==expectedBin&&binY==expectedBin;
-    Serial.printf("[cine-geometry] width=%u height=%u binning=%d/%d scale=%u\n",s->status.framesize==FRAMESIZE_QXGA?2048:1024,s->status.framesize==FRAMESIZE_QXGA?1536:768,binX,binY,s->status.scale);
-    s_rawInfo.enabled=ok;s_rawInfo.route=route;s_rawInfo.format=fmt;s_rawInfo.isp=isp;
-    int black=s->get_reg(s,0x4009,255);s_rawInfo.black=black>=0?uint8_t(black/4):4;
-    for(unsigned c=0;c<3;++c){int hi=s->get_reg(s,0x3400+c*2,15),lo=s->get_reg(s,0x3401+c*2,255);
-      if(hi<0||lo<0)return false;s_rawInfo.gains[c]=uint16_t((hi<<8)|lo);}
-    Serial.printf("[cine-raw] verified=%u route=%d format=%d isp=%d black=%u gains=%u/%u/%u bayer=BGGR bits=8\n",ok,route,fmt,isp,s_rawInfo.black,s_rawInfo.gains[0],s_rawInfo.gains[1],s_rawInfo.gains[2]);
-    if(!ok)return false;
-  }
+
 
   // Load the OV5640 autofocus firmware while SCCB is still ours. After this
   // function returns init() leaves Wire1 installed for Arduino and we'd no longer be
@@ -658,48 +626,6 @@ bool ovReadReg(uint16_t reg, uint8_t* outVal) {
 }  // namespace
 
 namespace {
-ShutterInfo s_shutter;
-bool rawShutterRead(ShutterInfo& value){
- uint8_t p[4],hi,lo,e[3],g[2],manual,gainMode;
- for(unsigned i=0;i<4;++i)if(!ovReadReg(0x303a+i,&p[i]))return false;
- // Supported Cine profiles only: external 24MHz, PLL /1, pre /1, seld5 /2.
- // Native multiplier 8 => 24MHz SYSCLK; binned multiplier 4 => 12MHz.
- if(p[0]!=0||p[2]!=0x11||p[3]!=2||(p[1]!=4&&p[1]!=8))return false;
- if(!ovReadReg(0x380c,&hi)||!ovReadReg(0x380d,&lo))return false;value.hts=(uint16_t(hi&15)<<8)|lo;
- if(!ovReadReg(0x380e,&hi)||!ovReadReg(0x380f,&lo))return false;value.vts=(uint16_t(hi)<<8)|lo;
- if(!value.hts||value.vts<=4)return false;value.clockHz=uint32_t(p[1])*3000000;
- for(unsigned i=0;i<3;++i)if(!ovReadReg(0x3500+i,&e[i]))return false;
- if(!ovReadReg(0x350a,&g[0])||!ovReadReg(0x350b,&g[1])||!ovReadReg(0x3503,&manual)||!ovReadReg(0x3509,&gainMode)|| (gainMode&8))return false;
- value.ticks=(uint32_t(e[0]&15)<<16)|(uint32_t(e[1])<<8)|e[2];value.gainQ4=(uint16_t(g[0]&3)<<8)|g[1];
- value.actualUs=core::cine::shutterMicros(value.ticks,value.hts,value.clockHz);
- value.frameUs=uint32_t((uint64_t(value.hts)*value.vts*1000000+value.clockHz/2)/value.clockHz);
- value.manual=(manual&3)==3;value.valid=true;return true;
-}
-bool rawShutterWrite(uint32_t ticks,uint16_t gain){
- uint8_t control;if(!ovReadReg(0x3503,&control))return false;
- return ovWriteReg(0x3503,control|3)&&ovWriteReg(0x3500,(ticks>>16)&15)&&ovWriteReg(0x3501,(ticks>>8)&255)&&ovWriteReg(0x3502,ticks&255)&&ovWriteReg(0x350a,(gain>>8)&3)&&ovWriteReg(0x350b,gain&255);
-}
-bool rawShutterApply(uint32_t us,ShutterInfo& value){
- const auto old=value;const uint32_t ticks=core::cine::shutterTicks(us,value.hts,value.vts,value.clockHz);if(!ticks)return false;
- // Hold the settled sensor gain exactly (including fractional bits); ensure
- // at least unity and respect Cine's existing 4x maximum.
- const uint16_t gain=value.gainQ4<16?16:value.gainQ4>64?64:value.gainQ4;
- if(rawShutterWrite(ticks,gain)&&rawShutterRead(value)&&value.manual&&value.ticks==ticks&&value.gainQ4==gain){value.requestedUs=us;s_shutter=value;return true;}
- (void)rawShutterWrite(old.ticks,old.gainQ4);s_shutter.valid=false;return false;
-}
-}
-bool lockRawShutter(ShutterInfo* out){
- if(!out||!s_initialized||s_detectedPid!=0x3660||!s_rawInfo.enabled||!hal::bus::lockI2c(kI2cLockTimeout))return false;
- ShutterInfo value;const bool ok=rawShutterRead(value)&&rawShutterApply(core::cine::shutterSpeedsUs[core::cine::nearestShutter(value.actualUs)],value);
- hal::bus::unlockI2c();if(ok)*out=value;return ok;
-}
-bool setRawShutter(uint32_t us,ShutterInfo* out){
- if(!out||us<1000||us>100000||!s_initialized||s_detectedPid!=0x3660||!s_rawInfo.enabled||!s_shutter.valid||!hal::bus::lockI2c(kI2cLockTimeout))return false;
- ShutterInfo value;bool ok=rawShutterRead(value)&&value.manual&&value.gainQ4==s_shutter.gainQ4;
- if(ok)ok=rawShutterApply(us,value);hal::bus::unlockI2c();if(ok)*out=value;return ok;
-}
-
-namespace {
 bool jpegShutterRead(ShutterInfo& value){
  uint8_t p[4],hi,lo,e[3],g[2],manual,gainMode;
  for(unsigned i=0;i<4;++i)if(!ovReadReg(0x303a+i,&p[i]))return false;
@@ -717,24 +643,15 @@ bool jpegShutterRead(ShutterInfo& value){
 }
 }
 bool readJpegShutter(ShutterInfo* output){
- if(!output||!s_initialized||s_detectedPid!=0x3660||s_rawInfo.enabled||!hal::bus::lockI2c(kI2cLockTimeout))return false;
+ if(!output||!s_initialized||s_detectedPid!=0x3660||!hal::bus::lockI2c(kI2cLockTimeout))return false;
  ShutterInfo value;const bool ok=jpegShutterRead(value);hal::bus::unlockI2c();if(ok)*output=value;return ok;
 }
-bool readJpegGamma(uint8_t output[16]){
- if(!output||!s_initialized||s_detectedPid!=0x3660||s_rawInfo.enabled||s_lastFb)return false;
- auto* sensor=esp_camera_sensor_get();if(!sensor||sensor->pixformat!=PIXFORMAT_JPEG||!hal::bus::lockI2c(kI2cLockTimeout))return false;
- uint8_t values[16];bool ok=true;for(unsigned i=0;i<16;++i)ok=ovReadReg(0x5481+i,&values[i])&&ok;
- hal::bus::unlockI2c();if(ok)memcpy(output,values,16);return ok;
-}
-bool configureIspExperiment(const IspExperiment &request, IspReadback *output) {
-  if (!output || request.aeLevel < -2 || request.aeLevel > 2 || request.wbMode > 4 ||
+bool configureCineIsp(const CineIspRequest &request, CineIspReadback *output) {
+  if (!output || request.wbMode < 1 || request.wbMode > 4 ||
       request.shutterUs < 1000 || request.shutterUs > 100000 || request.gainQ4 < 16 ||
-      request.gainQ4 > 64 || !s_initialized || s_detectedPid != 0x3660 || s_rawInfo.enabled ||
+      request.gainQ4 > 64 || !s_initialized || s_detectedPid != 0x3660 ||
       s_lastFb)
     return false;
-  for (unsigned i = 1; i < 15; ++i)
-    if (request.gamma[i] < request.gamma[i - 1])
-      return false;
   auto *sensor = esp_camera_sensor_get();
   if (!sensor || sensor->pixformat != PIXFORMAT_JPEG || !hal::bus::lockI2c(kI2cLockTimeout))
     return false;
@@ -758,10 +675,6 @@ bool configureIspExperiment(const IspExperiment &request, IspReadback *output) {
   // Manual startup may freeze settled AE on the safe ladder; Auto keeps live integration.
   uint32_t requestedUs = request.shutterUs;
   uint16_t requestedGain = request.gainQ4;
-  if (ok && request.useSettledExposure) {
-    requestedUs = core::cine::shutterSpeedsUs[core::cine::nearestShutter(shutter.actualUs)];
-    requestedGain = shutter.gainQ4 < 16 ? 16 : shutter.gainQ4 > 64 ? 64 : shutter.gainQ4;
-  }
   bool mutated = false;
   auto write = [&](uint16_t reg, uint8_t value) {
     if (!ok)
@@ -798,7 +711,7 @@ bool configureIspExperiment(const IspExperiment &request, IspReadback *output) {
       ok = ovReadReg(0x3a00, &aeControl) && ok;
       write(0x3a00, aeControl & ~5u); // no night mode and no AEC freeze
       // Same target/fast-zone formula as the pinned OV3660 vendor driver.
-      const unsigned target = (request.aeLevel + 5) * 10 + 5;
+      const unsigned target = (core::cine::aeLevel + 5) * 10 + 5;
       const unsigned low = target * 23 / 25, high = target * 27 / 25;
       write(0x3a0f, high);
       write(0x3a10, low);
@@ -852,13 +765,13 @@ bool configureIspExperiment(const IspExperiment &request, IspReadback *output) {
     write(0x530b, 0);
     write(0x530c, 0);
     for (unsigned i = 0; i < 16; ++i)
-      write(0x5481 + i, request.gamma[i]);
+      write(0x5481 + i, core::cine::gamma[i]);
     for (unsigned i = 0; i < 11; ++i)
-      write(0x5381 + i, request.cmx[i]);
+      write(0x5381 + i, core::cine::matrix[i]);
     if (request.autoExposure)
       write(0x3503, old[0] & ~3u);
     if (ok) {
-      IspReadback result;
+      CineIspReadback result;
       ok = jpegShutterRead(result.shutter);
       ok = ok && (request.autoExposure ? !result.shutter.manual
                                        : result.shutter.manual && result.shutter.ticks == ticks &&

@@ -93,9 +93,7 @@ void Session::stop() {
 
 bool Session::running() const { return ownsCamera_ && hal::camera::initialized(); }
 void Session::settle(uint32_t milliseconds) { if (!reader_ && running()) hal::camera::settleAutoExposure(milliseconds); }
-bool Session::configureIspExperiment(const hal::camera::IspExperiment& request,hal::camera::IspReadback* output){return !reader_&&!frameHeld_&&owner==this&&running()&&hal::camera::configureIspExperiment(request,output);}
-bool Session::lockRawShutter(hal::camera::ShutterInfo* out){return !reader_&&!frameHeld_&&running()&&hal::camera::lockRawShutter(out);}
-bool Session::setRawShutter(uint32_t us,hal::camera::ShutterInfo* out){return !reader_&&!frameHeld_&&running()&&hal::camera::setRawShutter(us,out);}
+bool Session::configureCineIsp(const hal::camera::CineIspRequest& request,hal::camera::CineIspReadback* output){return !reader_&&!frameHeld_&&owner==this&&running()&&hal::camera::configureCineIsp(request,output);}
 bool Session::read(hal::camera::CameraFrame* frame) { if (reader_ || frameHeld_ || !running()) return false;
     return frameHeld_ = hal::camera::getFrame(frame); }
 void Session::returnFrame() { if (!reader_ && ownsCamera_) {hal::camera::returnFrame();frameHeld_ = false;} }

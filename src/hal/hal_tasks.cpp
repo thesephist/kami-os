@@ -52,7 +52,6 @@ static constexpr Spec kSpecs[] = {
     { "camera_audio", CORE_SVC,   PRIO_REALTIME,     6144 },
     { "video_capture",CORE_SVC,   PRIO_SERVICE,      4096 },
     { "video_preview",CORE_SVC,   PRIO_BACKGROUND,   6144 },
-    { "cine_cam_hal", CORE_SVC, configMAX_PRIORITIES - 2, 4096 }, // SDK priority retained; RAW frame-error logging needs >2 KB
     { "photo_print",  CORE_SVC,   PRIO_BACKGROUND,  10240 },
 };
 

@@ -3058,6 +3058,7 @@ static void handleLine(char* line, uint32_t nowMs) {
   if(apps::photo_printer::handleSerialCommand(line,Serial))return;
   if(apps::cine_camera::handleSerialCommand(line,Serial))return;
   if(tooling::handleDeviceApi(line,Serial))return;
+#if ORIGAMI_INPUT_TRACE
   if(!strcmp(line,"encoder trace start") || !strcmp(line,"encoder trace stop") || !strncmp(line,"encoder trace read ",19)) {
     if(!strcmp(line,"encoder trace start"))hal::input::encoderTraceStart();
     if(!strcmp(line,"encoder trace stop"))hal::input::encoderTraceStop();
@@ -3071,6 +3072,7 @@ static void handleLine(char* line, uint32_t nowMs) {
     }
     Serial.println("]}");return;
   }
+#endif
   if(!strcmp(line,"encoder status")) {
     static const uint32_t boot=esp_random();
     const auto r=hal::input::rotarySnapshot();
@@ -3404,6 +3406,7 @@ static void handleLine(char* line, uint32_t nowMs) {
     Serial.println("[ota-prompt-test] queued=1");
     return;
   }
+#if ORIGAMI_INPUT_PROFILING
   if (strcmp(line, "input cadence start") == 0) {
     hal::input::startButtonCadence();
     Serial.println("[button-cadence] started");
@@ -3417,6 +3420,7 @@ static void handleLine(char* line, uint32_t nowMs) {
       (unsigned long long)stats.blind50Us, (unsigned long long)stats.blind100Us);
     return;
   }
+#endif
   if (strcmp(line, "runtime status") == 0) {
     const auto policy=NavHandler::instance().runtimePolicy();
     Serial.printf("[runtime-policy] steps=%u idle_return=%u battery_sleep=%u activity=%u depth=%d power_sleep=%u\n",

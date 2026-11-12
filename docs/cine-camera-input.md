@@ -25,7 +25,7 @@ block the UI; no minimum physical pulse width is guaranteed.
 
 ## Same-device comparison
 
-Developer USB commands `input cadence start` and `input cadence stop` collect
+In `./build.sh --diagnostics`, USB commands `input cadence start` and `input cadence stop` collect
 successful physical button snapshot times without allocation or per-sample
 logging. Failed I2C reads are counted separately and do not shorten the measured
 gaps. Collection is disabled by default. The report contains sample count,
@@ -33,10 +33,9 @@ maximum gap, total sampled span and uncovered time for hypothetical 20/50/100ms
 pulses. The latter is a uniform-arrival-phase model, not a measured click failure
 rate.
 
-`cine bench input 0` temporarily disables the new Cine callbacks for a comparison
-with its original polling path. `cine bench input 1` restores them; reopening Cine
-also restores the normal enabled state. Neither command changes preferences.
-Stock Camera is measured through its normal viewfinder with its current settings.
+Production always uses the responsive preview callbacks. The historical
+`cine bench input` bypass is removed. Production compiles out cadence collection
+and encoder traces; the following measurements describe the earlier comparison.
 
 ## Hardware observations — November 11, 2026
 

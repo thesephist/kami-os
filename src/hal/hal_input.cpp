@@ -3,6 +3,7 @@
 #include "core/rotary_decoder.h"
 #include <esp_heap_caps.h>
 #include "hal/hal_encoder_trace.h"
+#include "config/diagnostics.h"
 
 #include "Pins.h"
 #include "driver/gpio.h"
@@ -32,8 +33,12 @@ static core::power_button::Gesture s_powerGesture;
 static bool takeRotaryScroll(core::rotary::Scroll& out);
 
 static void enqueue(EventType type, int16_t delta = 0, uint8_t key = 0, uint32_t gesture=0, bool undo=false) {
+#if ORIGAMI_INPUT_TRACE
     static uint32_t serial=0;
     const uint32_t id=type==EventType::Scroll?++serial:0;
+#else
+    constexpr uint32_t id=0;
+#endif
     uint8_t next = (uint8_t)((s_ringHead + 1) % kRingSize);
     if (next == s_ringTail) {if(id)encoderTrace(TraceKind::QueueFull,id,delta);return;}
     if(id)encoderTrace(TraceKind::Queue,id,delta,gesture,undo);
@@ -106,7 +111,7 @@ static void fireChord(uint32_t now) {
     enqueue(EventType::Chord_AB);
 }
 
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
+#if ORIGAMI_INPUT_PROFILING
 static core::input::Cadence s_buttonCadence;
 void startButtonCadence() { s_buttonCadence.start(); }
 core::input::Cadence::Snapshot buttonCadence(bool stop) {
@@ -119,7 +124,7 @@ void service(uint32_t nowMs) {
     // --- Read physical buttons (MCP23017 via hal::io) ---
     bool buttonA = false, buttonB = false, buttonC = false;
     const bool validButtons = hal::io::readButtonsSnapshot(&buttonA, &buttonB, &buttonC);
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
+#if ORIGAMI_INPUT_PROFILING
     if (s_buttonCadence.enabled()) s_buttonCadence.sample(micros(), validButtons);
 #endif
     if (!validButtons) {
@@ -259,7 +264,7 @@ static bool s_rotaryReady = false;
 static core::rotary::Decoder s_rotary;
 static portMUX_TYPE     s_rotaryMux         = portMUX_INITIALIZER_UNLOCKED;
 static bool             s_rotaryIsrInstalled = false;
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
+#if ORIGAMI_INPUT_TRACE
 static constexpr uint32_t kTraceCapacity=4096;
 static core::rotary::TraceStaging<128,kTraceCapacity> s_trace;
 // Retained, bounded, single capture. Never touched by ISR or with cache disabled.
@@ -322,11 +327,11 @@ static void IRAM_ATTR rotaryIsr() {
   // because the lookup returns 0 for invalid transitions.
   uint8_t s    = (uint8_t)((digitalRead(ROTARY_A_PIN) ? 2 : 0) | (digitalRead(ROTARY_B_PIN) ? 1 : 0));
   portENTER_CRITICAL_ISR(&s_rotaryMux);
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
+#if ORIGAMI_INPUT_TRACE
   const int before=s_rotary.state,partial=-s_rotary.partial,pending=s_rotary.pending;
 #endif
   s_rotary.step(s);
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
+#if ORIGAMI_INPUT_TRACE
   if(before!=s)traceLocked(TraceKind::Edge,0,before*4+s,partial,-s_rotary.partial,pending-s_rotary.pending);
 #endif
   portEXIT_CRITICAL_ISR(&s_rotaryMux);
@@ -404,7 +409,7 @@ static bool takeRotaryScroll(core::rotary::Scroll& out){
   if(!s_rotaryIsrInstalled)return false;
   portENTER_CRITICAL(&s_rotaryMux);
   const bool have=s_rotary.takeScroll(out);
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
+#if ORIGAMI_INPUT_TRACE
   static uint32_t reportedDrops=0;
   if(s_rotary.eventDrops!=reportedDrops){traceLocked(TraceKind::QueueFull,0,s_rotary.eventDrops-reportedDrops);reportedDrops=s_rotary.eventDrops;}
   if(have)traceLocked(TraceKind::Drain,0,out.delta,-s_rotary.partial,out.gesture,out.undo);
@@ -421,7 +426,7 @@ int takeRotaryDetents() {
   int32_t v;
   portENTER_CRITICAL(&s_rotaryMux);
   v = s_rotary.take();
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
+#if ORIGAMI_INPUT_TRACE
   if(v)traceLocked(TraceKind::Drain,0,v,-s_rotary.partial);
 #endif
   portEXIT_CRITICAL(&s_rotaryMux);
@@ -436,7 +441,7 @@ void resyncRotaryQuadrature() {
   uint8_t s = (uint8_t)((readRotaryA() ? 2 : 0) | (readRotaryB() ? 1 : 0));
   portENTER_CRITICAL(&s_rotaryMux);
   s_rotary.resync(s);
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
+#if ORIGAMI_INPUT_TRACE
   traceLocked(TraceKind::Resync,0,s,s_rotary.resyncs);
 #endif
   portEXIT_CRITICAL(&s_rotaryMux);

@@ -17,7 +17,7 @@ Auto uses the vendor driver's next darker metering target (`ae_level=-1`): targe
 45 instead of neutral 55, with the vendor's corresponding stable/fast thresholds.
 This biases exposure downward; it is not calibrated EV compensation or a new
 highlight-weighted metering algorithm, and cannot guarantee that every highlight
-will be retained. RAW/JPEG tone and color processing do not change.
+will be retained. The canonical JPEG tone and color treatment is fixed.
 
 AEC/AGC runs in the sensor, without per-preview I2C polling or userspace image
 analysis. Auto restores the session's original VTS after a slow manual exposure,
@@ -28,14 +28,13 @@ impose a lower effective maximum. Manual can still reach 100ms. The gain
 ceiling uses OV3660's Q4 real-gain register encoding (`0x40`), rather than the
 generic driver's gain-ceiling enum value.
 
-`cine shutter` reads fresh live exposure telemetry in Auto. Capture sidecars
+In the diagnostic build, `cine shutter` reads fresh live exposure telemetry in Auto. Capture sidecars
 record the automatic flag, AE target, sample validity and source. Auto's exposure
 sample is read near frame receipt; it is not embedded per-frame sensor metadata.
 A failed sample is recorded as unavailable and does not disable future captures.
 
-USB research command `cine bench auto LEVEL` accepts -2..2 for comparisons using
-the same hardware pipeline. Reopening Cine restores -1. It changes no preferences.
-Register changes are bounded, checked and rolled back on failure.
+The AE target is fixed at -1; the historical target-comparison command has been
+removed. Register changes are bounded, checked and rolled back on failure.
 
 Sources: the [Espressif OV3660 driver](https://github.com/espressif/esp32-camera/blob/master/sensors/ov3660.c)
 and [OV3660 datasheet](https://m5stack.oss-cn-shenzhen.aliyuncs.com/resource/docs/datasheet/unit/OV3660_CSP3_DS_1.3_sida.pdf),

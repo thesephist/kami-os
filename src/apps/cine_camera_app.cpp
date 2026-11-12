@@ -17,8 +17,6 @@
 #include <Arduino.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
-#include <errno.h>
 namespace apps {
 namespace cine_camera {
 namespace {
@@ -28,30 +26,25 @@ core::cine::WheelControl wheel;
 ui::ListView settingsList;
 bool menuEditing = false;
 enum class View { Menu, Opening, Preview, Error };
-cine::Mode requestedMode = cine::Mode::Isp3Mp;
 View current = View::Menu;
 unsigned feedbackStage = 0;
 uint32_t feedbackAt = 0;
-bool parseInteger(const char *text, long minimum, long maximum, long &value) {
-  if (!text || !*text)
-    return false;
-  char *end = nullptr;
-  errno = 0;
-  value = strtol(text, &end, 10);
-  return !errno && end && !*end && value >= minimum && value <= maximum;
-}
-bool active = false, dirty = true, pattern = false, saveRaw = false;
-bool responsivePreview = true;
+#if ORIGAMI_CINE_DIAGNOSTICS
+bool active = false;
+#endif
+bool dirty = true;
 uint32_t lastInputSample = 0;
 // Keep the gap short between reduced-IDCT previews and input handling.
 uint32_t requestedAt = 0, lastPreview = 0;
 constexpr uint16_t bg = 0xFFFF, fg = 0x0000, muted = 0x632C;
+#if ORIGAMI_CINE_DIAGNOSTICS
 const char *viewName() {
   return current == View::Preview   ? "preview"
          : current == View::Opening ? "opening"
          : current == View::Error   ? "error"
                                     : "menu";
 }
+#endif
 void invalidate() {
   dirty = true;
   hal::display::markAllDirty();
@@ -66,16 +59,17 @@ bool close(bool keepReservation = false) {
 void begin();
 void draw(TFT_eSprite &);
 void activate() {
+#if ORIGAMI_CINE_DIAGNOSTICS
   active = true;
-  responsivePreview = true;
-  requestedMode = cine::Mode::Isp3Mp;
-  pattern = saveRaw = false;
+#endif
   feedbackStage = 0;
   begin();
 }
 void exit() {
   close();
+#if ORIGAMI_CINE_DIAGNOSTICS
   active = false;
+#endif
 }
 void cover() { close(); }
 void begin() {
@@ -94,7 +88,7 @@ void snap() {
   invalidate();
   draw(hal::display::canvas());
   hal::display::flush();
-  const bool saved = session.capture(saveRaw);
+  const bool saved = session.capture();
   feedbackStage = saved ? 5 : 6;
   feedbackAt = millis();
   invalidate();
@@ -121,7 +115,7 @@ void tick(uint32_t) {
   }
   if (current == View::Opening) {
     if (services::photo_print::readyForCapture()) {
-      current = session.open(requestedMode, pattern) ? View::Preview : View::Error;
+      current = session.open() ? View::Preview : View::Error;
       if (current == View::Error)
         session.close();
       lastPreview = millis();
@@ -131,7 +125,7 @@ void tick(uint32_t) {
       invalidate();
     }
   } else if (current == View::Preview && uint32_t(now - lastPreview) >= 1u) {
-    if (session.preview(responsivePreview ? previewShouldAbort : nullptr))
+    if (session.preview(previewShouldAbort))
       invalidate();
     lastPreview = millis();
   }
@@ -220,8 +214,7 @@ struct PreviewCanvas {
     surface.setSwapBytes(true);
     surface.pushImage(x, y, w, h, pixels);
     surface.setSwapBytes(swap);
-    if (responsivePreview)
-      (void)previewShouldAbort(nullptr);
+    (void)previewShouldAbort(nullptr);
   }
 };
 void draw(TFT_eSprite &canvas) {
@@ -239,7 +232,9 @@ void draw(TFT_eSprite &canvas) {
                           feedbackStage * 1000 +
                               (millis() - feedbackAt < 999 ? millis() - feedbackAt : 999),
                           wheel.whiteBalance(), wheel.shown(millis()));
+#if ORIGAMI_CINE_PROFILING
     session.previewDrawn();
+#endif
   } else
     view.render(canvas);
   dirty = false;
@@ -350,30 +345,19 @@ App app = [] {
   a.onPowerHold = holdWheel;
   return a;
 }();
+#if ORIGAMI_CINE_DIAGNOSTICS
 bool handleSerialCommand(const char *line, Print &output) {
   if (strncmp(line, "cine ", 5))
     return false;
   if (!strcmp(line, "cine open")) {
     NavHandler::instance().push(&app);
-    requestedMode = cine::Mode::Isp3Mp;
-    begin();
     return true;
   }
   if (!strcmp(line, "cine status")) {
     const auto &s = session.status();
-    output.printf("[cine] status active=%u state=%s raw=%u frames=%u sequence=%lu saved=%u "
-                  "total_us=%lu cine=%s neutral=%s raw_path=%s meta=%s\n",
-                  active, viewName(), s.raw, s.frames, (unsigned long)s.sequence, s.saved,
-                  (unsigned long)s.totalUs, s.cinePath, s.neutralPath, s.rawPath, s.metadataPath);
-    return true;
-  }
-  if (!strcmp(line, "cine sensor")) {
-    hal::camera::ShutterInfo value;
-    const bool ok = hal::camera::readJpegShutter(&value);
-    output.printf("[cine-sensor] ok=%u manual=%u actual_us=%lu gain_q4=%u hts=%u vts=%u "
-                  "clock_hz=%lu frame_us=%lu\n",
-                  ok, value.manual, (unsigned long)value.actualUs, value.gainQ4, value.hts,
-                  value.vts, (unsigned long)value.clockHz, (unsigned long)value.frameUs);
+    output.printf("[cine] status active=%u state=%s sequence=%lu saved=%u photo=%s meta=%s\n",
+                  active, viewName(), (unsigned long)s.sequence, s.saved, s.photoPath,
+                  s.metadataPath);
     return true;
   }
   if (!active) {
@@ -385,205 +369,51 @@ bool handleSerialCommand(const char *line, Print &output) {
                   wheel.visible());
     return true;
   }
-  if (!strcmp(line, "cine startup")) {
-    const auto &s = session.status();
-    output.printf("[cine-startup] total_us=%lu prepare_us=%lu init_us=%lu ae_us=%lu isp_us=%lu "
-                  "first_preview_us=%lu ae_stable=%u\n",
-                  (unsigned long)s.startupUs, (unsigned long)s.startupPrepareUs,
-                  (unsigned long)s.startupInitUs, (unsigned long)s.startupAeUs,
-                  (unsigned long)s.startupIspUs, (unsigned long)s.startupPreviewUs,
-                  s.startupAeStable);
-    return true;
-  }
-  if (!strcmp(line, "cine latency")) {
-    const auto &s = session.status();
-    output.printf("[cine] latency reference=%u frames=%u read_us=%lu render_us=%lu dma_age_us=%lu "
-                  "drawn_age_us=%lu interval_us=%lu\n",
-                  session.usesReferencePreview(), s.frames, (unsigned long)s.previewReadUs,
-                  (unsigned long)s.previewUs, (unsigned long)s.previewAgeUs,
-                  (unsigned long)s.previewDrawAgeUs, (unsigned long)s.previewIntervalUs);
-    return true;
-  }
-  if (!strncmp(line, "cine preview ", 13)) {
-    session.referencePreview(!strcmp(line + 13, "reference"));
-    session.retainPreviewRaw(!strcmp(line + 13, "held"));
-    output.printf("[cine] preview reference=%u\n", session.usesReferencePreview());
-    return true;
-  }
-  if (!strcmp(line, "cine verify")) {
-    output.printf("[cine] pattern_check ok=%u\n", session.verifyPattern());
-    return true;
-  }
-  if (!strcmp(line, "cine meter")) {
-    const auto &m = session.metering();
-    output.printf("[cine] meter valid=%u samples=%u auto_thirds=%d total_thirds=%d ec_thirds=%d "
-                  "geometric=%.6f arithmetic=%.6f p98=%.6f limited=%u time_us=%lu\n",
-                  m.valid, m.samples, m.exposureThirds, session.parameters().exposureThirds,
-                  int(session.parameters().exposureThirds) - m.exposureThirds, m.geometricMean,
-                  m.arithmeticMean, m.highlight, m.highlightLimited,
-                  (unsigned long)session.status().meterUs);
-    return true;
-  }
   if (!strcmp(line, "cine shutter")) {
     if (session.autoExposure())
       session.refreshExposure();
     const auto &s = session.shutter();
-    output.printf("[cine] shutter valid=%u manual=%u requested_us=%lu actual_us=%lu ticks_q4=%lu "
-                  "gain_q4=%u hts=%u vts=%u clock_hz=%lu frame_us=%lu\n",
+    output.printf("[cine] shutter valid=%u manual=%u requested_us=%lu actual_us=%lu gain_q4=%u "
+                  "frame_us=%lu\n",
                   s.valid, s.manual, (unsigned long)s.requestedUs, (unsigned long)s.actualUs,
-                  (unsigned long)s.ticks, s.gainQ4, s.hts, s.vts, (unsigned long)s.clockHz,
-                  (unsigned long)s.frameUs);
+                  s.gainQ4, (unsigned long)s.frameUs);
     return true;
   }
   if (!strcmp(line, "cine wb")) {
-    output.printf("[cine] wb=%u name=%s\n", session.whiteBalance(),
+    output.printf("[cine] wb=%u name=%s\n", unsigned(session.whiteBalance()),
                   cine::Session::whiteBalanceName(session.whiteBalance()));
     return true;
   }
-  if (!strcmp(line, "cine bench resize")) {
-    const bool ok = session.benchmarkIspResize();
-    output.printf("[cine-resize] done=%u\n", ok);
-    invalidate();
+#if ORIGAMI_CINE_PROFILING
+  if (!strcmp(line, "cine startup")) {
+    const auto &p = session.profile();
+    output.printf("[cine-startup] total_us=%lu prepare_us=%lu init_us=%lu ae_us=%lu isp_us=%lu "
+                  "first_preview_us=%lu ae_stable=%u\n",
+                  (unsigned long)p.startupUs, (unsigned long)p.startupPrepareUs,
+                  (unsigned long)p.startupInitUs, (unsigned long)p.startupAeUs,
+                  (unsigned long)p.startupIspUs, (unsigned long)p.startupPreviewUs,
+                  p.startupAeStable);
     return true;
   }
-  if (!strcmp(line, "cine snap")) {
-    snap();
+  if (!strcmp(line, "cine capture-status")) {
+    const auto &p = session.profile();
+    output.printf("[cine-capture] frame_us=%lu save_us=%lu total_us=%lu\n",
+                  (unsigned long)p.frameUs, (unsigned long)p.saveUs, (unsigned long)p.totalUs);
     return true;
   }
-  if (!strncmp(line, "cine raw-save ", 14)) {
-    saveRaw = !strcmp(line + 14, "on");
-    output.printf("[cine] raw-save=%u\n", saveRaw);
+  if (!strcmp(line, "cine latency")) {
+    const auto &p = session.profile();
+    output.printf("[cine] latency frames=%lu read_us=%lu render_us=%lu dma_age_us=%lu "
+                  "drawn_age_us=%lu interval_us=%lu\n",
+                  (unsigned long)p.frames, (unsigned long)p.previewReadUs,
+                  (unsigned long)p.previewUs, (unsigned long)p.previewAgeUs,
+                  (unsigned long)p.previewDrawAgeUs, (unsigned long)p.previewIntervalUs);
     return true;
   }
-  if (!strncmp(line, "cine pattern ", 13)) {
-    if (!close(true))
-      return true;
-    pattern = !strcmp(line + 13, "on");
-    output.printf("[cine] pattern=%u\n", pattern);
-    return true;
-  }
-  if (!strncmp(line, "cine mode ", 10)) {
-    if (strcmp(line + 10, "sunny")) {
-      output.println("[cine] Cine is the only app mode; use bench mode for diagnostics");
-      return true;
-    }
-    if (!close(true))
-      return true;
-    requestedMode = cine::Mode::Isp3Mp;
-    begin();
-    return true;
-  }
-  if (!strncmp(line, "cine bench mode ", 16)) {
-    if (strcmp(line + 16, "stock") && strcmp(line + 16, "isp3mp") && strcmp(line + 16, "binned") &&
-        strcmp(line + 16, "ispvga") && strcmp(line + 16, "native")) {
-      output.println("[cine] invalid bench mode");
-      return true;
-    }
-    if (!close(true))
-      return true;
-    requestedMode = !strcmp(line + 16, "stock")    ? cine::Mode::Stock
-                    : !strcmp(line + 16, "isp3mp") ? cine::Mode::Isp3Mp
-                    : !strcmp(line + 16, "binned") ? cine::Mode::RawBinned
-                    : !strcmp(line + 16, "ispvga") ? cine::Mode::IspVga
-                                                   : cine::Mode::RawNative;
-    begin();
-    return true;
-  }
-  if (!strncmp(line, "cine bench ev ", 14)) {
-    long target = 0;
-    if (parseInteger(line + 14, -6, 6, target))
-      session.adjustExposure(int(target) - session.parameters().exposureThirds);
-    output.printf("[cine] bench exposure_thirds=%d\n", session.parameters().exposureThirds);
-    return true;
-  }
-  if (!strncmp(line, "cine bench input ", 17)) {
-    long enabled = 0;
-    if (!parseInteger(line + 17, 0, 1, enabled)) {
-      output.println("[cine-input] use bench input 0|1");
-      return true;
-    }
-    responsivePreview = enabled != 0;
-    output.printf("[cine-input] responsive=%u\n", responsivePreview);
-    return true;
-  }
-  if (!strncmp(line, "cine bench auto ", 16)) {
-    long level = 0;
-    if (!parseInteger(line + 16, -2, 2, level)) {
-      output.println("[cine-ae] use bench auto LEVEL (-2..2)");
-      return true;
-    }
-    cine::IspConfig config;
-    config.autoExposure = true;
-    config.useSettledExposure = true;
-    config.aeLevel = int8_t(level);
-    const bool ok = session.configureIsp(config);
-    if (!ok && !session.status().open)
-      current = View::Error;
-    output.printf("[cine-ae] ok=%u auto=%u ae_level=%ld\n", ok, session.autoExposure(), level);
-    invalidate();
-    return true;
-  }
-  if (!strncmp(line, "cine bench isp ", 15)) {
-    char curve[12] = {}, matrix[12] = {}, evText[16] = {}, usText[16] = {}, gainText[16] = {},
-         extra = 0;
-    long ev = 0, us = 0, gain = 0;
-    if (sscanf(line + 15, "%11s %11s %15s %15s %15s %c", curve, matrix, evText, usText, gainText,
-               &extra) != 5 ||
-        !parseInteger(evText, -6, 6, ev) || !parseInteger(usText, 1000, 100000, us) ||
-        !parseInteger(gainText, 16, 64, gain) ||
-        (strcmp(curve, "srgb") && strcmp(curve, "filmic") && strcmp(curve, "vendor")) ||
-        (strcmp(matrix, "vendor") && strcmp(matrix, "vendor+1") && strcmp(matrix, "fitted")) ||
-        ev < -6 || ev > 6 || us < 1000 || us > 100000 || gain < 16 || gain > 64) {
-      output.println("[cine-isp] use bench isp srgb|filmic|vendor vendor|vendor+1|fitted EV_THIRDS "
-                     "SHUTTER_US GAIN_Q4");
-      return true;
-    }
-    cine::IspConfig config;
-    config.gamma = !strcmp(curve, "vendor")   ? cine::GammaCurve::Vendor
-                   : !strcmp(curve, "filmic") ? cine::GammaCurve::Filmic
-                                              : cine::GammaCurve::Srgb;
-    config.matrix = !strcmp(matrix, "fitted")     ? cine::ColorMatrix::FittedDiagnostic
-                    : !strcmp(matrix, "vendor+1") ? cine::ColorMatrix::VendorSaturated
-                                                  : cine::ColorMatrix::VendorNeutral;
-    config.exposureThirds = ev;
-    config.shutterUs = us;
-    config.gainQ4 = gain;
-    const bool ok = session.configureIsp(config);
-    if (!ok && !session.status().open)
-      current = View::Error;
-    const auto &r = session.ispReadback();
-    output.printf("[cine-isp] ok=%u curve=%s matrix=%s ev_thirds=%d requested_us=%u actual_us=%lu "
-                  "gain_q4=%u clock_hz=%lu hts=%u vts=%u gamma=",
-                  ok, curve, matrix, int(ev), unsigned(us), (unsigned long)r.shutter.actualUs,
-                  r.shutter.gainQ4, (unsigned long)r.shutter.clockHz, r.shutter.hts, r.shutter.vts);
-    for (auto v : r.gamma)
-      output.printf("%02x", v);
-    output.print(" cmx=");
-    for (auto v : r.cmx)
-      output.printf("%02x", v);
-    output.printf(" flags=%02x%02x wb=%u/%u/%u\n", r.flags[0], r.flags[1], r.wb[0], r.wb[1],
-                  r.wb[2]);
-    invalidate();
-    return true;
-  }
-  if (!strncmp(line, "cine bench tone ", 16)) {
-    if (strcmp(line + 16, "filmic") && strcmp(line + 16, "srgb")) {
-      output.println("[cine] use bench tone filmic|srgb");
-      return true;
-    }
-    session.setFilmic(!strcmp(line + 16, "filmic"));
-    output.printf("[cine] software_filmic=%u\n", session.parameters().filmic);
-    invalidate();
-    return true;
-  }
-  if (!strcmp(line, "cine bench save")) {
-    const bool ok = session.capture() && session.benchmarkResolution();
-    output.printf("[cine] bench done=%u\n", ok);
-    return true;
-  }
-  output.println("[cine] use open/status/snap/shutter/latency/meter/mode sunny; gated research: "
-                 "bench mode native|binned|isp3mp|stock, bench ev -6..6, bench save");
+#endif
+  output.println("[cine] use open/status/controls/shutter/wb/startup/latency/capture-status");
   return true;
 }
+#endif
 } // namespace cine_camera
 } // namespace apps

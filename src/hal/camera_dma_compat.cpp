@@ -4,7 +4,6 @@
 #include <esp_log.h>
 #include <stdint.h>
 #include <stdio.h>
-#include "hal/hal_tasks.h"
 #include <string.h>
 
 // Arduino 2.0.17 ships esp32-camera as a precompiled SDK archive. Keep this
@@ -25,19 +24,9 @@ struct DmaGeometry {
 };
 static_assert(sizeof(DmaGeometry) == 20, "Camera DMA prefix must stay packed");
 bool s_internalJpeg = false;
-bool s_cineBayerTransport = false;
 #if defined(ORIGAMI_RGB_PREVIEW_TRIAL)
 bool s_rgbPreview = false;
 #endif
-}
-
-extern "C" BaseType_t __real_xTaskCreatePinnedToCore(TaskFunction_t,const char*,uint32_t,void*,UBaseType_t,TaskHandle_t*,BaseType_t);
-extern "C" BaseType_t __wrap_xTaskCreatePinnedToCore(TaskFunction_t fn,const char* name,uint32_t stack,void* arg,UBaseType_t priority,TaskHandle_t* handle,BaseType_t core){
-  if(s_cineBayerTransport && name && !strcmp(name,"cam_task")){
-    stack=hal::tasks::spec(hal::tasks::Id::CineCameraHal).stackBytes;
-    printf("[cine-driver] camera stack=%u priority=%u core=%d\n",unsigned(stack),unsigned(priority),int(core));
-  }
-  return __real_xTaskCreatePinnedToCore(fn,name,stack,arg,priority,handle,core);
 }
 
 extern "C" esp_err_t __real_cam_config(const camera_config_t*, framesize_t, uint16_t);
@@ -52,9 +41,7 @@ extern "C" esp_err_t __wrap_cam_config(const camera_config_t* config,
   s_rgbPreview=config && config->pixel_format==PIXFORMAT_RGB565 &&
       config->xclk_freq_hz==24000000 && size==FRAMESIZE_QVGA && sensorPid==0x3660;
 #endif
-  s_cineBayerTransport=config && config->pixel_format==PIXFORMAT_GRAYSCALE && (size==FRAMESIZE_XGA||size==FRAMESIZE_QXGA) && sensorPid==0x3660 && config->xclk_freq_hz==24000000;
   const esp_err_t result = __real_cam_config(config, size, sensorPid);
-  s_cineBayerTransport=false;
   s_internalJpeg = false;
 #if defined(ORIGAMI_RGB_PREVIEW_TRIAL)
   s_rgbPreview=false;
@@ -86,22 +73,7 @@ extern "C" bool __wrap_ll_cam_dma_sizes(void* camera) {
     return ok;
   }
 #endif
-  if(s_cineBayerTransport){
-    DmaGeometry raw;memcpy(&raw,camera,sizeof(raw));
-    // 1024-byte rows. Two six-row halves and two-row nodes; all divide 768.
-    // This only changes Cine's one-byte XGA transport, never main-camera JPEG.
-    printf("[cine-dma] original=%u/%u/%u item=%u\n",raw.bufferSize,raw.chunkSize,raw.nodeSize,raw.bytesPerItem);
-    if(raw.bytesPerItem==1 && ((raw.bufferSize==24576 && raw.chunkSize==12288 && raw.nodeSize==3072)||(raw.bufferSize==32768 && raw.chunkSize==16384 && raw.nodeSize==2048))){
-      const size_t largest=heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
-      // Preserve the established ring when it fits. Fragmentation can leave
-      // only 11KB contiguous; the 8KB fallback has two 4KB halves, complete
-      // 2048-byte nodes, and divides native/binned frame sizes exactly.
-      raw.bufferSize=largest<13312u?8192u:12288u;raw.chunkSize=raw.bufferSize/2;raw.chunkCount=2;raw.nodeSize=2048;
-      printf("[cine-dma] ring=%u half=%u node=%u largest=%u\n",raw.bufferSize,raw.chunkSize,raw.nodeSize,unsigned(largest));
-      memcpy(camera,&raw,sizeof(raw));
-    }
-    return ok;
-  }
+
   if (!s_internalJpeg) return ok;
 
   DmaGeometry dma;
