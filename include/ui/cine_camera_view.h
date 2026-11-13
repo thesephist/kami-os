@@ -2,7 +2,7 @@
 #include "ui/camera_photographer_view.h"
 #include "config/ui_theme.h"
 // Cine uses the stock framing, photographer, shutter and settings marks.
-// A opens settings; the wheel toggles shutter/Color. Popup is transient.
+// A opens settings; the wheel starts in Color and toggles Color/shutter. Popup is transient.
 namespace ui {
 namespace cine_view {
 template <class C>
@@ -81,7 +81,7 @@ inline int regularWidth(const char *text) {
 #endif
 }
 template <class C>
-void chrome(C &c, const char *color, const char *shutter, unsigned phase, bool colorWheel = false,
+void chrome(C &c, const char *color, const char *shutter, unsigned phase, bool colorWheel = true,
             bool showControls = false) {
   const unsigned stage = phase / 1000;
   const char *caption = stage == 1 || stage == 2   ? "CAPTURE"
@@ -110,10 +110,10 @@ void chrome(C &c, const char *color, const char *shutter, unsigned phase, bool c
   // Fixed 50%-opaque pills snap on and off with the controls.
   backdrop(c, x, 43, width, 28, 128);
   backdrop(c, x, 73, width, 28, 128);
-  pixel_text::text(c, "SS", x + 8, 52, 1, colorWheel ? 0xffff : kUiEdit);
-  pixel_text::text(c, "Color", x + 8, 82, 1, colorWheel ? kUiEdit : 0xffff);
-  regular(c, shutter, x + 50, 46, colorWheel ? 0xffff : kUiEdit);
-  regular(c, color, x + 50, 76, colorWheel ? kUiEdit : 0xffff);
+  pixel_text::text(c, "SS", x + 8, 82, 1, colorWheel ? 0xffff : kUiEdit);
+  pixel_text::text(c, "Color", x + 8, 52, 1, colorWheel ? kUiEdit : 0xffff);
+  regular(c, shutter, x + 50, 76, colorWheel ? 0xffff : kUiEdit);
+  regular(c, color, x + 50, 46, colorWheel ? kUiEdit : 0xffff);
 }
 } // namespace cine_view
 } // namespace ui

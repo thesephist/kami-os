@@ -167,10 +167,10 @@ void build(ui::scene::Scene &view, int16_t w, int16_t h) {
                      color = wheel.color() ? kUiEdit : 0xffff;
       char shutter[20];
       shutterValue(shutter, sizeof(shutter));
-      view.addLabel("cine.wheel_shutter_label", {142, 52, 26, 12}, "SS", ss, 0, 1);
-      view.addLabel("cine.wheel_color_label", {130, 82, 42, 12}, "Color", color, 0, 1);
-      view.addLabel("cine.wheel_shutter_value", {178, 46, 90, 26}, shutter, ss, 0, 2);
-      view.addLabel("cine.wheel_color_value", {180, 76, 90, 26},
+      view.addLabel("cine.wheel_shutter_label", {142, 82, 26, 12}, "SS", ss, 0, 1);
+      view.addLabel("cine.wheel_color_label", {130, 52, 42, 12}, "Color", color, 0, 1);
+      view.addLabel("cine.wheel_shutter_value", {178, 76, 90, 26}, shutter, ss, 0, 2);
+      view.addLabel("cine.wheel_color_value", {180, 46, 90, 26},
                     cine::Session::colorName(session.colorMode()), color, 0, 2);
     }
     if (feedbackStage)
@@ -309,7 +309,7 @@ void input(hal::input::InputEvent e) {
 bool holdWheel() {
   // In every Cine view this gesture is consumed instead of putting Kami to sleep.
   if (session.status().open && session.resumeAutoExposure()) {
-    wheel.reset();
+    wheel.reset(false); // Restoring Auto explicitly selects its shutter readout.
     wheel.show(millis());
     settingsList.selected = 0;
     menuEditing = false;

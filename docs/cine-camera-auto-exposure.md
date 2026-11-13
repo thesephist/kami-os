@@ -3,10 +3,11 @@
 Cine starts with the OV3660's continuous auto exposure and gain enabled. Sunny
 white balance and the existing sRGB/vendor-matrix treatment remain the baseline.
 
+- The wheel starts in Color, with its readout above SS.
 - Turn the wheel in SS mode to take manual control, starting from a fresh sensor
   exposure reading. The wheel keeps the existing direction and 1/1000–1/10s range;
   the current gain is frozen when manual control starts.
-- Click the wheel to switch SS/WB. Changing WB preserves Auto or Manual exposure.
+- Click the wheel to switch Color/SS. Changing Color preserves Auto or Manual exposure.
 - Hold the wheel for one second to restore Auto, select SS and reveal its readout.
   Cine consumes this gesture in all its screens, so it cannot trigger standby.
   After exiting Cine with A+B, the usual hold-to-sleep gesture works again.

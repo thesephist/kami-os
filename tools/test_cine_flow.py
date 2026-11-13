@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
     frames_dir = directory / "native"
     frames_dir.mkdir()
     frames = flow.native_frames(photo, frames_dir, 40001)
-    assert len(frames) == 19 and all(im.size == (280, 240) for im in frames.values())
+    assert len(frames) == 20 and all(im.size == (280, 240) for im in frames.values())
     menu = frames["settings-ss"]
     # Color replaces the old WB menu row, so the 2026-11-09 pre-Color
     # framebuffer digests no longer apply. Keep the native geometry/font and
@@ -52,14 +52,18 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
     flow.render(photo, output, home, "focused-dark", shutter_us=40001)
     manifest = json.loads(output.with_suffix(".json").read_text())
     assert len(manifest["states"]) == 7 and manifest["scale"] == 2
+    assert len(manifest["exported_screens"]) == len(frames) + 1
+    screens_dir = output.parent / (output.stem + "-screens")
+    assert all(Image.open(screens_dir / (key + ".png")).size == (280, 240)
+               for key in manifest["exported_screens"])
     sheet = Image.open(output)
     assert sheet.size == (2160, 2440) and sheet.getpixel((0, 0)) == (0, 0, 0)
     for col, y, key in [
         (0, 310, "home"),
         (1, 310, "live"),
         (2, 310, "saved"),
-        (0, 1000, "shutter"),
-        (1, 1000, "color-sunny"),
+        (0, 1000, "color-sunny"),
+        (1, 1000, "shutter"),
         (0, 1690, "settings-ss"),
         (1, 1690, "settings-ss-edit"),
     ]:
@@ -72,6 +76,29 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
             ).getbbox()
             is None
         ), key
+    # Both high-resolution themes preserve screenshots exactly, including edges.
+    frames["home"] = Image.open(home).convert("RGB")
+    for transparent in (False, True):
+        high, states = flow.focused_sheet(frames, 3, transparent)
+        assert high.size == (3240, 3660) and len(states) == 7
+        assert high.getpixel((0, 0)) == ((0, 0, 0, 0) if transparent else (0, 0, 0))
+        outside = high.copy() if transparent else None
+        for col, y, key in [
+            (0, 310, "home"), (1, 310, "live"), (2, 310, "saved"),
+            (0, 1000, "color-sunny"), (1, 1000, "shutter"),
+            (0, 1690, "settings-ss"), (1, 1690, "settings-ss-edit"),
+        ]:
+            x, yy = round((80 + col * 700) * 1.5), round((y + 52) * 1.5)
+            box = (x, yy, x + 840, yy + 720)
+            crop = high.crop(box)
+            expected = frames[key].resize((840, 720), Image.Resampling.NEAREST)
+            assert ImageChops.difference(crop.convert("RGB"), expected).getbbox() is None, key
+            if transparent:
+                assert crop.getchannel("A").getextrema() == (255, 255)
+                outside.paste((0, 0, 0, 0), box)
+        if transparent:
+            # Only black annotations remain outside the opaque screenshot rectangles.
+            assert outside.convert("RGB").getextrema() == ((0, 0), (0, 0), (0, 0))
     # Native captures override source renders without interpolation or recoloring.
     captures = directory / "captures"
     captures.mkdir()
@@ -79,5 +106,5 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
     flow.render(photo, output, home, "focused-dark", captures)
     assert Image.open(output).getpixel((80, 1742)) == (48, 80, 112)
 print(
-    "PASS Cine flow: production native states, menu raster/chrome, seven screens, exact 2x placement and native capture overrides"
+    "PASS Cine flow: production native states, menu raster/chrome, seven screens, exact 2x/3x placement, transparent black annotations and native capture overrides"
 )

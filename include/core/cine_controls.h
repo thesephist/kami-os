@@ -4,12 +4,13 @@ namespace core {
 namespace cine {
 // UI-task-owned modal wheel; all deadlines are wrap-safe millisecond ages.
 class WheelControl {
-  bool color_ = false, visible_ = false;
+  bool color_ = true, visible_ = false;
   uint32_t changedAt_ = 0;
 
 public:
-  void reset() {
-    color_ = visible_ = false;
+  void reset(bool color = true) {
+    color_ = color;
+    visible_ = false;
     changedAt_ = 0;
   }
   bool color() const { return color_; }

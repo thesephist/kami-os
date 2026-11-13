@@ -161,8 +161,9 @@ struct Session {
     const char *message = "Camera resources busy";
   } st;
   unsigned color = 0;
+  bool automatic = true;
   const Shutter &shutter() const { return s; }
-  bool autoExposure() const { return false; }
+  bool autoExposure() const { return automatic; }
   const Status &status() const { return st; }
   unsigned colorMode() const { return color; }
   static const char *colorName(unsigned w) {
@@ -197,6 +198,7 @@ int main(int argc, char **argv) {
   };
   const Frame frames[] = {{"live", 0, 0, false, false, reviewShutter},
                           {"shutter", 0, 0, true, false, reviewShutter},
+                          {"shutter-auto", 0, 0, true, false, reviewShutter},
                           {"color-sunny", 0, 0, true, true, reviewShutter},
                           {"color-gold", 1, 0, true, true, reviewShutter},
                           {"color-portra", 2, 0, true, true, reviewShutter},
@@ -210,6 +212,7 @@ int main(int argc, char **argv) {
     Canvas c;
     ui::cine_view::image(c, photo.data(), 224, 168, s.stage == 1);
     session.s.actualUs = s.shutter;
+    session.automatic = !s.controls || s.colorMode || std::string(s.id) == "shutter-auto";
     char shutter[20];
     shutterValue(shutter, sizeof(shutter));
     ui::cine_view::chrome(c, cine::Session::colorName(s.color), shutter, s.stage * 1000 + 100,
@@ -219,6 +222,7 @@ int main(int argc, char **argv) {
   for (int selected = 0; selected < 3; ++selected)
     for (int editing = 0; editing < (selected == 2 ? 1 : 2); ++editing) {
       current = View::Menu;
+      session.automatic = !(selected == 0 && editing);
       settingsList.selected = selected;
       menuEditing = editing;
       Canvas c;

@@ -155,27 +155,31 @@ def native_frames(image, output, shutter_us=16667):
     return {f.stem: Image.open(f).convert("RGB") for f in output.glob("*.ppm")}
 
 
-def focused_dark_sheet(frames):
+def focused_sheet(frames, screen_scale=2, transparent=False):
     """Show the core interaction loops, preserving native screenshot pixels."""
-    width, height = 2160, 2440
-    sheet = Image.new("RGB", (width, height), "black")
+    ratio = screen_scale / 2
+    q = lambda value: round(value * ratio)
+    width, height = q(2160), q(2440)
+    ink = (0, 0, 0, 255) if transparent else "white"
+    border = ink if transparent else "#555555"
+    sheet = Image.new("RGBA", (width, height), (0, 0, 0, 0)) if transparent else Image.new("RGB", (width, height), "black")
     draw = ImageDraw.Draw(sheet)
     fontroot = Path("/usr/share/fonts/truetype/dejavu")
     states = []
 
     def font(size, bold=False):
         return ImageFont.truetype(
-            str(fontroot / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf")), size
+            str(fontroot / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf")), q(size)
         )
 
     def text(x, y, value, size=23, bold=False):
-        draw.text((x, y), value, font=font(size, bold), fill="white")
+        draw.text((q(x), q(y)), value, font=font(size, bold), fill=ink)
 
     def wrap(x, y, value, max_width=550, size=23):
         row = ""
         for word in value.split():
             trial = (row + " " + word).strip()
-            if row and draw.textlength(trial, font=font(size)) > max_width:
+            if row and draw.textlength(trial, font=font(size)) > q(max_width):
                 text(x, y, row, size)
                 y += 33
                 row = word
@@ -190,17 +194,23 @@ def focused_dark_sheet(frames):
         x = 80 + col * 700
         states.append(key)
         text(x, y, title, 29, True)
-        frame = frames[key].resize((560, 480), Image.Resampling.NEAREST)
-        sheet.paste(frame, (x, y + 52))
-        draw.rectangle((x - 1, y + 51, x + 560, y + 532), outline="#555555")
+        frame = frames[key].resize((280 * screen_scale, 240 * screen_scale), Image.Resampling.NEAREST)
+        px, py = q(x), q(y + 52)
+        sheet.paste(frame, (px, py))
+        stroke = max(1, q(1))
+        draw.rectangle(
+            (px - stroke, py - stroke, px + frame.width + stroke - 1,
+             py + frame.height + stroke - 1),
+            outline=border, width=stroke,
+        )
         wrap(x, y + 550, body)
 
     def arrow(x1, x2, y, label, reverse=False):
-        draw.line((x1, y, x2, y), fill="white", width=3)
-        draw.polygon([(x2, y), (x2 - 12, y - 7), (x2 - 12, y + 7)], fill="white")
+        draw.line(tuple(q(v) for v in (x1, y, x2, y)), fill=ink, width=q(3))
+        draw.polygon([(q(x), q(yy)) for x, yy in [(x2, y), (x2 - 12, y - 7), (x2 - 12, y + 7)]], fill=ink)
         if reverse:
-            draw.polygon([(x1, y), (x1 + 12, y - 7), (x1 + 12, y + 7)], fill="white")
-        tw = draw.textlength(label, font=font(21, True))
+            draw.polygon([(q(x), q(yy)) for x, yy in [(x1, y), (x1 + 12, y - 7), (x1 + 12, y + 7)]], fill=ink)
+        tw = draw.textlength(label, font=font(21, True)) / ratio
         text((x1 + x2 - tw) / 2, y - 37, label, 21, True)
 
     def note(col, y, title, entries):
@@ -219,7 +229,7 @@ def focused_dark_sheet(frames):
         "A  Settings / back     B  Take photo     C  Click wheel     Turn  Adjust / browse",
         25,
     )
-    draw.line((80, 265, 2080, 265), fill="#555555", width=2)
+    draw.line(tuple(q(v) for v in (80, 265, 2080, 265)), fill=border, width=q(2))
 
     card(
         0, 310, "home", "01   Home", "B opens Cine. A+B exits Cine to the previous app."
@@ -229,7 +239,7 @@ def focused_dark_sheet(frames):
         310,
         "live",
         "02   Viewfinder",
-        "Clean at rest. A opens settings; turn the wheel to adjust shutter speed.",
+        "Starts in Auto exposure with Sunny color. The wheel starts in Color; A opens settings.",
     )
     card(
         2,
@@ -244,33 +254,23 @@ def focused_dark_sheet(frames):
     card(
         0,
         1000,
-        "shutter",
-        "04   Adjust shutter",
-        "Turn adjusts 1/1000–1/10s. Both readouts appear; the active row is blue.",
+        "color-sunny",
+        "04   Adjust color",
+        "The wheel starts in Color. Turn cycles Sunny, Gold, Portra, Mono, Cool and Vivid; exposure stays Auto.",
     )
     card(
         1,
         1000,
-        "color-sunny",
-        "05   Adjust color",
-        "C switches SS / Color with a haptic. Turn cycles Sunny, Gold, Portra, Mono, Cool and Vivid.",
+        "shutter",
+        "05   Adjust shutter",
+        "C switches to SS with a haptic. Turning selects a manual shutter from 1/1000–1/10s. C returns to Color.",
     )
     arrow(660, 760, 1285, "C", reverse=True)
     note(
-        2,
-        1000,
-        "Wheel interaction",
-        [
-            (
-                "Viewfinder → readouts",
-                "Turn to adjust the selected value, or click C to switch modes.",
-            ),
-            (
-                "Readouts → viewfinder",
-                "After 2s without adjustment, both readouts snap out. No fade; values and mode are retained.",
-            ),
-            ("Default", "Shutter mode, with Sunny color."),
-        ],
+        2, 1000, "Wheel interaction",
+        [("Color first · Auto exposure", "Color is above SS. Click C to switch the active row; the selected row is blue."),
+         ("Hold C → Auto", "Restores Auto exposure and selects SS; keeps the selected Color."),
+         ("2s → clean view", "Readouts snap away after 2s. Mode and values are retained.")],
     )
 
     card(
@@ -310,14 +310,14 @@ def focused_dark_sheet(frames):
     text(
         80,
         2382,
-        "280 × 240 screens at 2×  ·  IMG_6997.jpg  ·  Native firmware pixels · supplied photo in previews",
+        f"280 × 240 screens at {screen_scale}×  ·  IMG_6997.jpg  ·  Native firmware pixels · supplied photo in previews",
         22,
     )
     return sheet, states
 
 
 def render(
-    image, output, home=None, layout="full", captured_screens=None, shutter_us=16667
+    image, output, home=None, layout="full", captured_screens=None, shutter_us=16667, screen_scale=2
 ):
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -344,12 +344,12 @@ def render(
                             f"Device capture must be native 280x240: {capture}"
                         )
                     frames[key] = im
-        if layout == "focused-dark":
-            sheet, states = focused_dark_sheet(frames)
+        if layout in ("focused-dark", "focused-transparent"):
+            sheet, states = focused_sheet(frames, screen_scale, layout == "focused-transparent")
             sheet.save(output)
             frames_dir = output.parent / (output.stem + "-screens")
             frames_dir.mkdir(exist_ok=True)
-            for key in states:
+            for key in frames:
                 frames[key].save(frames_dir / (key + ".png"))
             output.with_suffix(".json").write_text(
                 json.dumps(
@@ -358,8 +358,10 @@ def render(
                         "output": str(output.resolve()),
                         "size": list(sheet.size),
                         "native_screen": [280, 240],
-                        "scale": 2,
+                        "scale": screen_scale,
+                        "transparent": layout == "focused-transparent",
                         "states": states,
+                        "exported_screens": list(frames),
                         "layout": layout,
                         "shutter_us": shutter_us,
                         "ui_source": "production Cine raster, list layout, safe-area painter and TFT glyph/shape raster",
@@ -518,7 +520,7 @@ def render(
         for value in [
             "A  settings / back",
             "B  take photo",
-            "C  click wheel: switch SS / Color",
+            "C  click wheel: switch Color / SS",
             "Turn wheel: adjust value",
         ]:
             x += pill(x, 210, value) + 18
@@ -834,10 +836,11 @@ if __name__ == "__main__":
     p.add_argument("--image", required=True, type=Path)
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--home", type=Path)
-    p.add_argument("--layout", choices=("full", "focused-dark"), default="full")
+    p.add_argument("--layout", choices=("full", "focused-dark", "focused-transparent"), default="full")
     p.add_argument(
         "--captured-screens", type=Path, help="Native device PNGs keyed by state name"
     )
     p.add_argument("--shutter-us", type=int, default=16667)
+    p.add_argument("--screen-scale", type=int, choices=(2, 3), default=2, help="Integer screenshot scale in focused layouts; 3 produces 3240×3660")
     a = p.parse_args()
-    render(a.image, a.output, a.home, a.layout, a.captured_screens, a.shutter_us)
+    render(a.image, a.output, a.home, a.layout, a.captured_screens, a.shutter_us, a.screen_scale)

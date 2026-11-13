@@ -47,16 +47,18 @@ struct AgentState{};
     )
     + r"""
 int main(){using E=hal::input::EventType;
- input({E::ButtonC_Tap});assert(wheel.color()&&cues==1&&last==services::vibration::Cue::Select);
- input({E::Scroll,1});assert(session.wb==1&&cues==1);
- clockMs=1000;input({E::ButtonC_Tap});assert(!wheel.color()&&cues==2&&wheel.shown(2999)&&!wheel.shown(3000));
- input({E::Scroll,3});assert(session.shutter==-3&&cues==2);
+ assert(wheel.color()&&!wheel.visible());
+ input({E::Scroll,1});assert(session.wb==1&&session.shutter==0&&cues==0);
+ input({E::ButtonC_Tap});assert(!wheel.color()&&cues==1&&last==services::vibration::Cue::Select);
+ input({E::Scroll,3});assert(session.shutter==-3&&session.wb==1&&cues==1);
+ clockMs=1000;input({E::ButtonC_Tap});assert(wheel.color()&&cues==2&&wheel.shown(2999)&&!wheel.shown(3000));
  input({E::ButtonB_Tap});assert(photos==1);
- input({E::ButtonA_Tap});assert(current==View::Menu&&settingsList.selected==0&&!menuEditing);
+ input({E::ButtonA_Tap});assert(current==View::Menu&&settingsList.selected==1&&!menuEditing);
+ input({E::Scroll,-1});assert(settingsList.selected==0);
  input({E::ButtonC_Tap});assert(menuEditing&&cues==2);input({E::Scroll,1});assert(session.shutter==-4);
  input({E::ButtonA_Tap});assert(!menuEditing&&current==View::Menu);input({E::ButtonA_Tap});assert(current==View::Preview);
  current=View::Opening;input({E::ButtonC_Tap});assert(cues==2);current=View::Error;input({E::ButtonA_Tap});assert(NavHandler::instance().popped==1);
- current=View::Preview;wheel.toggle(clockMs);assert(holdWheel()&&session.autoResumes==1&&!wheel.color()&&wheel.shown(clockMs)&&cues==3);
+ current=View::Preview;assert(wheel.color());assert(holdWheel()&&session.autoResumes==1&&!wheel.color()&&wheel.shown(clockMs)&&cues==3);
  current=View::Menu;menuEditing=true;settingsList.selected=1;assert(holdWheel()&&session.autoResumes==2&&!menuEditing&&settingsList.selected==0);
  current=View::Opening;session.s.open=false;assert(holdWheel()&&session.autoResumes==2);
  AgentState state;onInput(state,{E::ButtonB_Tap});assert(NavHandler::instance().pushed==&apps::cine_camera::app);
