@@ -101,3 +101,27 @@ collection, encoder ISR trace hooks and its internal-RAM staging/archive state.
 `tools/check_cine_build.py` checks actual linked symbols in either image.
 Diagnostics expose only open/status/controls/WB/shutter/startup/latency/capture
 measurements; none select a different photographic pipeline.
+
+## Embedded EXIF for new Cine photos
+
+New captures include camera Make (`Origami Computing`), Model (`Kami`),
+software (`kamiOS <version> / Cine Camera`), and Color mode in ImageDescription.
+The Exif IFD records sensor-readback ExposureTime in seconds, Auto/Manual
+exposure mode/program, fixed/manual white balance, sRGB, and image dimensions.
+Auto exposure is sampled immediately after acquiring the frame; it is not
+guaranteed to identify that exact frame's integration. Unavailable exposure
+readings omit ExposureTime. Lens/aperture/focal length, uncalibrated ISO, per-device
+serial, GPS and unsynchronized capture timestamps are absent. Lens identity was
+not verified from the sensor model or approximate field of view.
+
+A bounded 512-byte stack buffer holds the complete APP1 block. Photo storage
+writes the original leading JFIF APP0 (if present), APP1, then the remaining JPEG
+through one SD file open and SPI reservation. No JPEG pixels are decoded, copied
+into a second full-image buffer, or re-encoded; the original compressed bytes
+remain intact. Stock capture uses its existing metadata-free path.
+
+A short multipart write fails the capture and removes the partial JPEG. If EXIF
+construction fails, the original JPEG can still be saved with a metadata-failure
+message. JSON sidecars retain detailed settings and indicate `embedded_exif`; no
+existing photos are backfilled. `tools/test_cine_exif.py` exercises the actual
+builder/storage/writer under sanitizers and independently parses resulting JPEGs.

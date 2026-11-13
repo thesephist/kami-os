@@ -17,6 +17,7 @@ checks = [
     "check_tracked_secrets",
     "test_cine_isp_config",
     "test_cine_service",
+    "test_cine_exif",
     "test_cine_isp_transaction",
     "test_cine_decoder_ownership",
     "test_cine_jpeg_preview",

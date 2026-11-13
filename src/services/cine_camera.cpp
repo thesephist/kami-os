@@ -5,6 +5,8 @@
 #include "core/cine_shutter.h"
 #include "core/cine_frame.h"
 #include "core/cine_isp.h"
+#include "core/cine_exif.h"
+#include "core/device_id.h"
 #include <Arduino.h>
 #include <esp_camera.h>
 #include <esp_heap_caps.h>
@@ -236,10 +238,14 @@ bool Session::capture() {
   const bool sampleValid = autoExposure() ? refreshExposure() : shutter_.valid;
   const auto exposure = sampleValid ? shutter_ : hal::camera::ShutterInfo{};
   CINE_PROFILE(const uint64_t saveAt = esp_timer_get_time();)
+  uint8_t exif[core::cine::exifCapacity];
+  const core::cine::ExifInfo exifInfo{core::device::firmwareVersion(), colorName(colorMode_),
+      exposure.valid ? exposure.actualUs : 0, uint16_t(frame.width), uint16_t(frame.height), autoExposure()};
+  const size_t exifBytes = core::cine::buildExif(exif, sizeof(exif), exifInfo);
   const bool ok =
       frame.format == PIXFORMAT_JPEG &&
       core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height, 2048, 1536) &&
-      photos::write(target, frame.buf, frame.len);
+      photos::write(target, frame.buf, frame.len, exif, exifBytes);
   camera_.returnFrame();
   CINE_PROFILE(profile_.saveUs = uint32_t(esp_timer_get_time() - saveAt);
                profile_.totalUs = uint32_t(esp_timer_get_time() - started);)
@@ -251,14 +257,14 @@ bool Session::capture() {
   const int n = snprintf(metadata, sizeof(metadata),
                          "{\"version\":3,\"mode\":\"Cine ISP 3MP\",\"source\":\"sensor ISP "
                          "JPEG\",\"output_width\":2048,\"output_height\":1536,"
-                         "\"jpeg_quantization_scale\":%u,"
+                         "\"jpeg_quantization_scale\":%u,\"embedded_exif\":%s,"
                          "\"color_profile\":\"sensor-ISP\",\"color_version\":2,"
                          "\"color_mode\":%u,\"color_name\":\"%s\",\"gamma\":\"%s\",\"wb_preset\":1,"
                          "\"shutter\":{\"sample_valid\":%s,\"sample_source\":\"%s\","
                          "\"automatic\":%s,\"ae_level\":%s,\"manual\":%s,"
                          "\"requested_us\":%lu,\"actual_us\":%lu,\"integration_ticks_q4\":%lu,"
                          "\"gain_q4\":%u,\"hts\":%u,\"vts\":%u,\"clock_hz\":%lu},\"saved\":%s}",
-                         unsigned(core::cine::jpegQuantizationScale), unsigned(colorMode_),
+                         unsigned(core::cine::jpegQuantizationScale), ok && exifBytes ? "true" : "false", unsigned(colorMode_),
                          colorName(colorMode_), colorMode_ == ColorMode::Mono
                              ? "sRGB + classic silver" : "sRGB approximation",
                          sampleValid ? "true" : "false",
@@ -274,7 +280,7 @@ bool Session::capture() {
       n > 0 && size_t(n) < sizeof(metadata) &&
       hal::sd::writeFile(status_.metadataPath, reinterpret_cast<const uint8_t *>(metadata), n);
   snprintf(status_.message, sizeof(status_.message),
-           ok ? (metadataOk ? "Photo saved" : "Photo saved; metadata failed")
+           ok ? (metadataOk && exifBytes ? "Photo saved" : "Photo saved; metadata failed")
               : "Save failed; partial files retained");
   return ok;
 }

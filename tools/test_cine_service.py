@@ -50,7 +50,7 @@ namespace services{namespace camera{class Session{public:
         r"""#pragma once
 #include <stdint.h>
 #include <stddef.h>
-namespace services{namespace photos{struct Target{uint32_t sequence=0;char path[64]={};bool valid()const{return sequence!=0;}};bool initialize();Target prepare();bool write(const Target&,const uint8_t*,size_t);}}
+namespace services{namespace photos{struct Target{uint32_t sequence=0;char path[64]={};bool valid()const{return sequence!=0;}};bool initialize();Target prepare();bool write(const Target&,const uint8_t*,size_t);bool write(const Target&,const uint8_t*,size_t,const uint8_t*,size_t);}}
 """,
     )
     put(
@@ -70,12 +70,16 @@ namespace services{namespace photos{struct Target{uint32_t sequence=0;char path[
 int allocations=0,budget=-1;int64_t clockUs=0;bool running=false,reserved=false,held=false,stopBlocked=false,failInit=false,failRead=false,failDecode=false,failWrite=false,failMeta=false,failTelemetry=false,failIsp=false,stale=false,badFrame=false;
 unsigned liveUs=10000,liveGain=32;
 unsigned sequence=0,reads=0,configs=0;hal::camera::CineIspRequest last;std::vector<uint8_t> jpeg={255,216,1,2,255,217};std::map<std::string,std::vector<uint8_t>> files;
+const char* firmware="v1.0.5";
+namespace core{namespace device{const char* firmwareVersion(){return firmware;}}}
+std::vector<uint8_t> embeddedExif;
 namespace hal{namespace camera{
 bool readJpegShutter(ShutterInfo* p){if(failTelemetry)return false;p->valid=true;p->manual=false;p->actualUs=liveUs;p->gainQ4=liveGain;p->vts=1564;p->frameUs=75000;return true;}
 }namespace sd{bool ensureDir(const char*){return true;}bool writeFile(const char* path,const uint8_t* data,size_t n){if(failMeta)return false;files[path].assign(data,data+n);return true;}}}
 namespace services{namespace photos{
 bool initialize(){return true;}Target prepare(){Target t;t.sequence=++sequence;snprintf(t.path,sizeof(t.path),"/photos/IMG_%05u.jpg",sequence);return t;}
 bool write(const Target& t,const uint8_t* data,size_t n){if(failWrite)return false;files[t.path].assign(data,data+n);return true;}
+bool write(const Target& t,const uint8_t* data,size_t n,const uint8_t* exif,size_t count){assert(!count||(count>10&&count<=512&&exif[0]==255&&exif[1]==225));embeddedExif.assign(exif,exif+count);return write(t,data,n);}
 }namespace camera{
 Session::PrepareResult Session::prepareCapture(bool deep){assert(!deep);reserved=true;return PrepareResult::Ready;}
 bool Session::start(int size,int format,const hal::camera::Tuning* t,int quality){assert(size==20&&format==4&&quality==8&&t->wb_mode==1&&t->ae_level==-1&&!t->lenc&&!t->allowNightMode);::running=!failInit;return ::running;}
@@ -108,12 +112,13 @@ int main(){using services::cine_camera::Session;using services::cine_camera::Col
  c.adjustColor(1);assert(!c.autoExposure()&&c.shutter().requestedUs==100000&&last.gainQ4==128);
  c.adjustShutter(INT_MIN);assert(c.shutter().requestedUs==1000);assert(c.resumeAutoExposure()&&c.autoExposure()&&last.autoVts==1564);count=configs;assert(c.resumeAutoExposure()&&configs==count);
  assert(!c.capture());clockUs+=1000000;assert(c.preview());stale=true;n=reads;assert(!c.capture()&&!held&&reads==n+4);stale=false;
- assert(c.capture()&&!held&&c.status().saved&&files[c.status().photoPath]==jpeg);std::string meta(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"jpeg_quantization_scale\":8")!=std::string::npos);assert(meta.find("\"color_name\":")!=std::string::npos&&meta.find("\"wb_preset\":1")!=std::string::npos);assert(meta.find("\"automatic\":true")!=std::string::npos&&meta.find("\"sample_valid\":true")!=std::string::npos&&meta.find("\"output_width\":2048")!=std::string::npos);
+ assert(c.capture()&&!held&&c.status().saved&&files[c.status().photoPath]==jpeg&&!embeddedExif.empty());std::string meta(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"embedded_exif\":true")!=std::string::npos);assert(meta.find("\"jpeg_quantization_scale\":8")!=std::string::npos);assert(meta.find("\"color_name\":")!=std::string::npos&&meta.find("\"wb_preset\":1")!=std::string::npos);assert(meta.find("\"automatic\":true")!=std::string::npos&&meta.find("\"sample_valid\":true")!=std::string::npos&&meta.find("\"output_width\":2048")!=std::string::npos);
  stale=true;assert(!c.capture());stale=false;
 #if ORIGAMI_CINE_PROFILING
  assert(c.profile().saveUs==0&&c.profile().totalUs==0);
 #endif
  failTelemetry=true;assert(c.capture()&&c.autoExposure());meta=std::string(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"sample_valid\":false")!=std::string::npos);failTelemetry=false;
+ std::string overlongVersion(90,'x');firmware=overlongVersion.c_str();assert(c.capture()&&embeddedExif.empty()&&strstr(c.status().message,"metadata failed"));meta=std::string(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"embedded_exif\":false")!=std::string::npos);firmware="v1.0.5";
  failMeta=true;assert(c.capture()&&strstr(c.status().message,"metadata failed"));failMeta=false;
  failWrite=true;assert(!c.capture()&&!held&&!c.status().saved);failWrite=false;
  stopBlocked=true;assert(!c.close()&&running&&reserved&&allocations==1);stopBlocked=false;assert(c.close()&&!running&&!reserved&&!allocations);assert(c.close());
@@ -134,6 +139,7 @@ int main(){using services::cine_camera::Session;using services::cine_camera::Col
                 str(p / "test.cpp"),
                 str(R / "src/services/cine_camera.cpp"),
                 str(R / "src/services/cine_camera_isp.cpp"),
+                str(R / "src/core/cine_exif.cpp"),
                 "-o",
                 str(p / "test"),
             ],

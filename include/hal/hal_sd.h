@@ -69,6 +69,11 @@ bool exists(const char* path);
 // Write binary data to file; returns true if written length == len
 bool writeFile(const char* path, const uint8_t* data, size_t len);
 
+// Write several buffers through one file open and SPI reservation. All pointers
+// are borrowed for this call only; zero-length parts may have null data.
+struct FilePart { const uint8_t* data; size_t length; };
+bool writeFileParts(const char* path, const FilePart* parts, size_t count);
+
 // Append binary data to a file; returns true if written length == len.
 bool appendFile(const char* path, const uint8_t* data, size_t len);
 

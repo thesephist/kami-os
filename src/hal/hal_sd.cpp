@@ -192,15 +192,34 @@ bool exists(const char* path) {
   return ok;
 }
 
-bool writeFile(const char* path, const uint8_t* data, size_t len) {
-  if (!s_mounted || !path || !data) return false;
+bool writeFileParts(const char* path, const FilePart* parts, size_t count) {
+  if (!s_mounted || !path || !parts || !count) return false;
+  // Validate the entire request before creating/truncating a destination.
+  size_t total = 0;
+  for (size_t i = 0; i < count; ++i) {
+    if ((!parts[i].data && parts[i].length) || parts[i].length > SIZE_MAX - total)
+      return false;
+    total += parts[i].length;
+  }
   hal::bus::lockSpi();
   File f = SD.open(path, FILE_WRITE);
   if (!f) { hal::bus::unlockSpi(); return false; }
-  size_t written = f.write(data, len);
+  bool ok = true;
+  for (size_t i = 0; i < count; ++i) {
+    if (parts[i].length && f.write(parts[i].data, parts[i].length) != parts[i].length) {
+      ok = false;
+      break;
+    }
+  }
   f.close();
   hal::bus::unlockSpi();
-  return (written == len);
+  return ok;
+}
+
+bool writeFile(const char* path, const uint8_t* data, size_t len) {
+  if (!data) return false;
+  const FilePart part{data, len};
+  return writeFileParts(path, &part, 1);
 }
 
 bool appendFile(const char* path, const uint8_t* data, size_t len) {
