@@ -251,9 +251,9 @@ def focused_dark_sheet(frames):
     card(
         1,
         1000,
-        "wb-sunny",
-        "05   Adjust white balance",
-        "C switches SS / WB with a haptic. Turn cycles Sunny, Cloudy, Office and Home.",
+        "color-sunny",
+        "05   Adjust color",
+        "C switches SS / Color with a haptic. Turn cycles Sunny, Gold, Portra, Mono, Cool and Vivid.",
     )
     arrow(660, 760, 1285, "C", reverse=True)
     note(
@@ -269,7 +269,7 @@ def focused_dark_sheet(frames):
                 "Readouts → viewfinder",
                 "After 2s without adjustment, both readouts snap out. No fade; values and mode are retained.",
             ),
-            ("Default", "Shutter mode, with Sunny white balance."),
+            ("Default", "Shutter mode, with Sunny color."),
         ],
     )
 
@@ -379,7 +379,7 @@ def render(
                                 )
                                 else (
                                     "production renderer with supplied photo"
-                                    if key in ("live", "saved", "shutter", "wb-sunny")
+                                    if key in ("live", "saved", "shutter", "color-sunny")
                                     else "production renderer; illustrative system status"
                                 )
                             )
@@ -518,7 +518,7 @@ def render(
         for value in [
             "A  settings / back",
             "B  take photo",
-            "C  click wheel: switch SS / WB",
+            "C  click wheel: switch SS / Color",
             "Turn wheel: adjust value",
         ]:
             x += pill(x, 210, value) + 18
@@ -611,40 +611,40 @@ def render(
         card(
             1,
             y,
-            "wb-sunny",
-            "WB · Sunny",
+            "color-sunny",
+            "Color · Sunny",
             6,
-            "Click C switches from shutter to WB and plays the standard Select haptic.",
-            "Default white balance",
+            "Click C switches from shutter to Color and plays the standard Select haptic.",
+            "Default color",
         )
         card(
             2,
             y,
-            "wb-cloudy",
-            "WB · Cloudy",
+            "color-gold",
+            "Color · Gold",
             7,
-            "Turning the wheel cycles through the four static presets.",
+            "Turning the wheel cycles through the six Color modes.",
             "Turn to cycle",
         )
         card(
             3,
             y,
-            "wb-office",
-            "WB · Office",
+            "color-portra",
+            "Color · Portra",
             8,
-            "No Auto preset. Previous shutter value remains visible.",
+            "The sensor stays on Sunny WB. Shutter remains visible.",
             "Turn to cycle",
         )
         card(
             4,
             y,
-            "wb-home",
-            "WB · Home",
+            "color-vivid",
+            "Color · Vivid",
             9,
-            "Presets wrap in both directions. Click C returns to shutter adjustment.",
+            "After Mono and Cool comes Vivid; the next turn wraps to Sunny. Click C returns to shutter.",
             "Turn to cycle",
         )
-        for col, label in [(0, "C +\nhaptic"), (1, "turn"), (2, "turn"), (3, "turn")]:
+        for col, label in [(0, "C +\nhaptic"), (1, "turn"), (2, "turn"), (3, "turn x3")]:
             arrow(
                 [(88 + col * 676 + 602, y + 298), (88 + (col + 1) * 676 - 4, y + 298)],
                 label,
@@ -652,7 +652,7 @@ def render(
         arrow([(760, y + 340), (690, y + 340)])
         arrow(
             [(3092, y + 702), (3092, y + 740), (1064, y + 740), (1064, y + 703)],
-            "WB wraps both ways",
+            "Color wraps both ways",
             where=(2070, y + 726),
             color=teal,
         )
@@ -692,19 +692,19 @@ def render(
         card(
             2,
             y,
-            "settings-wb",
-            "WB selected",
+            "settings-color",
+            "Color selected",
             12,
-            "After leaving edit mode, turn to the WB row. C begins editing.",
+            "After leaving edit mode, turn to the Color row. C begins editing.",
             "Browse",
         )
         card(
             3,
             y,
-            "settings-wb-edit",
-            "Edit white balance",
+            "settings-color-edit",
+            "Edit color",
             13,
-            "Turn cycles Sunny / Cloudy / Office / Home. C or A finishes editing.",
+            "Turn cycles Sunny / Gold / Portra / Mono / Cool / Vivid. C or A finishes editing.",
             "Edit",
         )
         card(

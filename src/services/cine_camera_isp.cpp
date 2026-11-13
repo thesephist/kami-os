@@ -15,7 +15,7 @@ bool Session::configureExposure(ExposureMode mode, uint32_t us, unsigned gain) {
   hal::camera::CineIspRequest request;
   request.shutterUs = us;
   request.gainQ4 = gain;
-  request.wbMode = uint8_t(wbPreset_);
+  request.colorMode = uint8_t(colorMode_);
   request.autoExposure = mode == ExposureMode::Automatic;
   request.autoVts = autoFrameVts_;
   if (!camera_.configureCineIsp(request, &ispReadback_)) {
@@ -47,22 +47,19 @@ bool Session::resumeAutoExposure() {
   return autoExposure() ||
          configureExposure(ExposureMode::Automatic, shutter_.actualUs, shutter_.gainQ4);
 }
-const char *Session::whiteBalanceName(WhiteBalance preset) {
-  static const char *names[] = {"Sunny", "Cloudy", "Office", "Home"};
-  const unsigned value = unsigned(preset);
-  return names[value >= 1 && value <= 4 ? value - 1 : 0];
+const char *Session::colorName(ColorMode preset) {
+  return core::cine::colorProfile(preset).name;
 }
-void Session::adjustWhiteBalance(int delta) {
+void Session::adjustColor(int delta) {
   if (!status_.open || !delta)
     return;
-  const auto previous = wbPreset_;
-  const int64_t step = int64_t(unsigned(wbPreset_) - 1) + delta;
-  wbPreset_ = WhiteBalance(1 + unsigned((step % 4 + 4) % 4));
-  if (wbPreset_ == previous)
+  const auto previous = colorMode_;
+  colorMode_ = core::cine::advanceColor(colorMode_, delta);
+  if (colorMode_ == previous)
     return;
   if (!configureExposure(exposureMode_, autoExposure() ? shutter_.actualUs : shutter_.requestedUs,
                          shutter_.gainQ4))
-    wbPreset_ = previous;
+    colorMode_ = previous;
 }
 } // namespace cine_camera
 } // namespace services

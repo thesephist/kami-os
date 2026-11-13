@@ -4,15 +4,15 @@ namespace core {
 namespace cine {
 // UI-task-owned modal wheel; all deadlines are wrap-safe millisecond ages.
 class WheelControl {
-  bool whiteBalance_ = false, visible_ = false;
+  bool color_ = false, visible_ = false;
   uint32_t changedAt_ = 0;
 
 public:
   void reset() {
-    whiteBalance_ = visible_ = false;
+    color_ = visible_ = false;
     changedAt_ = 0;
   }
-  bool whiteBalance() const { return whiteBalance_; }
+  bool color() const { return color_; }
   bool visible() const { return visible_; }
   // Snap on for two seconds; the selected mode survives after dismissal.
   bool shown(uint32_t now) const { return visible_ && uint32_t(now - changedAt_) < 2000u; }
@@ -21,7 +21,7 @@ public:
     changedAt_ = now;
   }
   void toggle(uint32_t now) {
-    whiteBalance_ = !whiteBalance_;
+    color_ = !color_;
     show(now);
   }
   bool expire(uint32_t now) {

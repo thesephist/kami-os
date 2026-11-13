@@ -149,8 +149,8 @@ ui::ListItem settingsItem(int index, void *) {
   if (index == 0)
     snprintf(label, sizeof(label), "Shutter  %s", shutter);
   else if (index == 1)
-    snprintf(label, sizeof(label), "WB  %s",
-             cine::Session::whiteBalanceName(session.whiteBalance()));
+    snprintf(label, sizeof(label), "Color  %s",
+             cine::Session::colorName(session.colorMode()));
   else
     snprintf(label, sizeof(label), "Back to camera");
   ui::ListItem item;
@@ -171,15 +171,15 @@ void build(ui::scene::Scene &view, int16_t w, int16_t h) {
       gear->bitmapTransparent = true;
     view.addLabel("cine.controls", {52, 196, 120, 20}, "B: PHOTO", 0xffff, 0, 1);
     if (wheel.shown(millis())) {
-      const uint16_t ss = wheel.whiteBalance() ? 0xffff : kUiEdit,
-                     wb = wheel.whiteBalance() ? kUiEdit : 0xffff;
+      const uint16_t ss = wheel.color() ? 0xffff : kUiEdit,
+                     color = wheel.color() ? kUiEdit : 0xffff;
       char shutter[20];
       shutterValue(shutter, sizeof(shutter));
       view.addLabel("cine.wheel_shutter_label", {142, 52, 26, 12}, "SS", ss, 0, 1);
-      view.addLabel("cine.wheel_wb_label", {142, 82, 26, 12}, "WB", wb, 0, 1);
+      view.addLabel("cine.wheel_color_label", {130, 82, 42, 12}, "Color", color, 0, 1);
       view.addLabel("cine.wheel_shutter_value", {178, 46, 90, 26}, shutter, ss, 0, 2);
-      view.addLabel("cine.wheel_wb_value", {178, 76, 90, 26},
-                    cine::Session::whiteBalanceName(session.whiteBalance()), wb, 0, 2);
+      view.addLabel("cine.wheel_color_value", {180, 76, 90, 26},
+                    cine::Session::colorName(session.colorMode()), color, 0, 2);
     }
     if (feedbackStage)
       view.addLabel("cine.feedback", {52, 196, 180, 20},
@@ -228,10 +228,10 @@ void draw(TFT_eSprite &canvas) {
                          cine::Session::previewHeight, feedbackStage == 1);
     char shutter[20];
     shutterValue(shutter, sizeof(shutter));
-    ui::cine_view::chrome(target, cine::Session::whiteBalanceName(session.whiteBalance()), shutter,
+    ui::cine_view::chrome(target, cine::Session::colorName(session.colorMode()), shutter,
                           feedbackStage * 1000 +
                               (millis() - feedbackAt < 999 ? millis() - feedbackAt : 999),
-                          wheel.whiteBalance(), wheel.shown(millis()));
+                          wheel.color(), wheel.shown(millis()));
 #if ORIGAMI_CINE_PROFILING
     session.previewDrawn();
 #endif
@@ -250,7 +250,7 @@ void input(hal::input::InputEvent e) {
     current = View::Menu;
     menuEditing = false;
     settingsList.totalItems = 3;
-    settingsList.selected = wheel.whiteBalance() ? 1 : 0;
+    settingsList.selected = wheel.color() ? 1 : 0;
     invalidate();
     return;
   }
@@ -270,7 +270,7 @@ void input(hal::input::InputEvent e) {
         if (settingsList.selected == 0)
           session.adjustShutter(-int(e.delta));
         else
-          session.adjustWhiteBalance(int(e.delta));
+          session.adjustColor(int(e.delta));
         if (!session.status().open)
           current = View::Error;
       } else
@@ -304,8 +304,8 @@ void input(hal::input::InputEvent e) {
   } else if (e.type == ET::Scroll) {
     if (!e.delta)
       return;
-    if (wheel.whiteBalance())
-      session.adjustWhiteBalance(int(e.delta));
+    if (wheel.color())
+      session.adjustColor(int(e.delta));
     else
       session.adjustShutter(-int(e.delta));
     wheel.show(millis());
@@ -365,7 +365,7 @@ bool handleSerialCommand(const char *line, Print &output) {
     return true;
   }
   if (!strcmp(line, "cine controls")) {
-    output.printf("[cine-controls] mode=%s popup=%u\n", wheel.whiteBalance() ? "wb" : "shutter",
+    output.printf("[cine-controls] mode=%s popup=%u\n", wheel.color() ? "color" : "shutter",
                   wheel.visible());
     return true;
   }
@@ -379,9 +379,9 @@ bool handleSerialCommand(const char *line, Print &output) {
                   s.gainQ4, (unsigned long)s.frameUs);
     return true;
   }
-  if (!strcmp(line, "cine wb")) {
-    output.printf("[cine] wb=%u name=%s\n", unsigned(session.whiteBalance()),
-                  cine::Session::whiteBalanceName(session.whiteBalance()));
+  if (!strcmp(line, "cine color")) {
+    output.printf("[cine] color=%u name=%s\n", unsigned(session.colorMode()),
+                  cine::Session::colorName(session.colorMode()));
     return true;
   }
 #if ORIGAMI_CINE_PROFILING

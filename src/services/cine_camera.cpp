@@ -28,7 +28,7 @@ bool Session::open() {
   status_ = {};
   shutter_ = {};
   shutterReadyUs_ = 0;
-  wbPreset_ = WhiteBalance::Sunny;
+  colorMode_ = ColorMode::Sunny;
   CINE_PROFILE(profile_ = {};)
   if (!photo_print::readyForCapture()) {
     snprintf(status_.message, sizeof(status_.message), "Printer task still finishing");
@@ -255,16 +255,18 @@ bool Session::capture() {
            (unsigned long)status_.sequence);
   char metadata[1200];
   const int n = snprintf(metadata, sizeof(metadata),
-                         "{\"version\":2,\"mode\":\"Cine ISP 3MP\",\"source\":\"sensor ISP "
+                         "{\"version\":3,\"mode\":\"Cine ISP 3MP\",\"source\":\"sensor ISP "
                          "JPEG\",\"output_width\":2048,\"output_height\":1536,"
                          "\"jpeg_quantization_scale\":%u,"
-                         "\"color_profile\":\"sensor-ISP\",\"gamma\":\"sRGB "
-                         "approximation\",\"vendor_saturation\":1,\"wb_preset\":%u,"
+                         "\"color_profile\":\"sensor-ISP\",\"color_version\":1,"
+                         "\"color_mode\":%u,\"color_name\":\"%s\",\"gamma\":\"%s\",\"wb_preset\":1,"
                          "\"shutter\":{\"sample_valid\":%s,\"sample_source\":\"%s\","
                          "\"automatic\":%s,\"ae_level\":%s,\"manual\":%s,"
                          "\"requested_us\":%lu,\"actual_us\":%lu,\"integration_ticks_q4\":%lu,"
                          "\"gain_q4\":%u,\"hts\":%u,\"vts\":%u,\"clock_hz\":%lu},\"saved\":%s}",
-                         unsigned(core::cine::jpegQuantizationScale), unsigned(wbPreset_),
+                         unsigned(core::cine::jpegQuantizationScale), unsigned(colorMode_),
+                         colorName(colorMode_), colorMode_ == ColorMode::Mono
+                             ? "sRGB + classic silver" : "sRGB approximation",
                          sampleValid ? "true" : "false",
                          autoExposure() ? "live-after-frame"
                          : sampleValid  ? "locked"

@@ -1,7 +1,6 @@
 """Check native Cine design states and lossless placement in the focused sheet."""
 
 from pathlib import Path
-import hashlib
 import importlib.util
 import json
 import tempfile
@@ -23,19 +22,13 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
     frames_dir = directory / "native"
     frames_dir.mkdir()
     frames = flow.native_frames(photo, frames_dir, 40001)
-    assert len(frames) == 17 and all(im.size == (280, 240) for im in frames.values())
+    assert len(frames) == 19 and all(im.size == (280, 240) for im in frames.values())
     menu = frames["settings-ss"]
-    # Actual scratch-device framebuffer captures, 2026-11-09: Sunny, 1/25s.
-    # Exclude only the live battery/clock/radio band; no personal image is stored.
-    captured_digests = {
-        "settings-ss": "ac2abb2a695e5581d459c9aac49b384aa654328b2b8157312d92f252aeac5ed2",
-        "settings-ss-edit": "75db36ad4144941b92dcd18abd43476888cdee5d4f2eafdf48eb1ac7181f3a0c",
-    }
-    for key, expected in captured_digests.items():
-        assert (
-            hashlib.sha256(frames[key].crop((0, 38, 280, 240)).tobytes()).hexdigest()
-            == expected
-        ), key
+    # Color replaces the old WB menu row, so the 2026-11-09 pre-Color
+    # framebuffer digests no longer apply. Keep the native geometry/font and
+    # lossless sheet-placement checks below; all six current modes are rendered.
+    for mode in ["sunny", "gold", "portra", "mono", "cool", "vivid"]:
+        assert "color-" + mode in frames
     # Native list geometry and the TFT midpoint-circle raster, not a smooth circle.
     assert menu.getpixel((14, 40)) == (255, 255, 255)
     assert menu.getpixel((19, 40)) == (0, 0, 0)
@@ -66,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
         (1, 310, "live"),
         (2, 310, "saved"),
         (0, 1000, "shutter"),
-        (1, 1000, "wb-sunny"),
+        (1, 1000, "color-sunny"),
         (0, 1690, "settings-ss"),
         (1, 1690, "settings-ss-edit"),
     ]:

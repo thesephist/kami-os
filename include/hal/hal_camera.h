@@ -157,12 +157,12 @@ struct ShutterInfo {bool valid=false,manual=false;uint32_t requestedUs=0,actualU
 struct CineIspRequest {
   uint32_t shutterUs = 16667;
   uint16_t gainQ4 = 16;
-  uint8_t wbMode = 1;
+  uint8_t colorMode = 0;
   bool autoExposure = false;
   uint16_t autoVts = 0;
 };
-struct CineIspReadback {bool valid=false;uint8_t gamma[16]={},cmx[11]={},flags[2]={};uint16_t wb[3]={};uint8_t wbMode=0;ShutterInfo shutter;};
-// Fixed Cine sRGB/vendor+1 profile and exposure. Finite register allowlist, rollback on
+struct CineIspReadback {bool valid=false;uint8_t gamma[16]={},cmx[11]={},flags[2]={};uint16_t wb[3]={};uint8_t colorMode=0;ShutterInfo shutter;};
+// Selected Cine ISP color profile and exposure. Finite register allowlist, rollback on
 // write/readback failure. Caller must own the camera with no outstanding loan.
 bool configureCineIsp(const CineIspRequest& request,CineIspReadback* output);
 // Read live JPEG exposure registers without changing AE/AGC or camera tuning.

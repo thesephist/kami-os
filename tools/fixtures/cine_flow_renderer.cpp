@@ -160,13 +160,13 @@ struct Session {
   struct Status {
     const char *message = "Camera resources busy";
   } st;
-  unsigned wb = 1;
+  unsigned color = 0;
   const Shutter &shutter() const { return s; }
   bool autoExposure() const { return false; }
   const Status &status() const { return st; }
-  unsigned whiteBalance() const { return wb; }
-  static const char *whiteBalanceName(unsigned w) {
-    const char *names[] = {"Auto", "Sunny", "Cloudy", "Office", "Home"};
+  unsigned colorMode() const { return color; }
+  static const char *colorName(unsigned w) {
+    const char *names[] = {"Sunny", "Gold", "Portra", "Mono", "Cool", "Vivid"};
     return names[w];
   }
 };
@@ -191,27 +191,29 @@ int main(int argc, char **argv) {
   fclose(f);
   struct Frame {
     const char *id;
-    unsigned wb, stage;
-    bool controls, wbMode;
+    unsigned color, stage;
+    bool controls, colorMode;
     uint32_t shutter;
   };
-  const Frame frames[] = {{"live", 1, 0, false, false, reviewShutter},
-                          {"shutter", 1, 0, true, false, reviewShutter},
-                          {"wb-sunny", 1, 0, true, true, reviewShutter},
-                          {"wb-cloudy", 2, 0, true, true, reviewShutter},
-                          {"wb-office", 3, 0, true, true, reviewShutter},
-                          {"wb-home", 4, 0, true, true, reviewShutter},
-                          {"capture", 1, 1, false, false, reviewShutter},
-                          {"saved", 1, 5, false, false, reviewShutter},
-                          {"save-failed", 1, 6, false, false, reviewShutter}};
+  const Frame frames[] = {{"live", 0, 0, false, false, reviewShutter},
+                          {"shutter", 0, 0, true, false, reviewShutter},
+                          {"color-sunny", 0, 0, true, true, reviewShutter},
+                          {"color-gold", 1, 0, true, true, reviewShutter},
+                          {"color-portra", 2, 0, true, true, reviewShutter},
+                          {"color-mono", 3, 0, true, true, reviewShutter},
+                          {"color-cool", 4, 0, true, true, reviewShutter},
+                          {"color-vivid", 5, 0, true, true, reviewShutter},
+                          {"capture", 0, 1, false, false, reviewShutter},
+                          {"saved", 0, 5, false, false, reviewShutter},
+                          {"save-failed", 0, 6, false, false, reviewShutter}};
   for (const auto &s : frames) {
     Canvas c;
     ui::cine_view::image(c, photo.data(), 224, 168, s.stage == 1);
     session.s.actualUs = s.shutter;
     char shutter[20];
     shutterValue(shutter, sizeof(shutter));
-    ui::cine_view::chrome(c, cine::Session::whiteBalanceName(s.wb), shutter, s.stage * 1000 + 100,
-                          s.wbMode, s.controls);
+    ui::cine_view::chrome(c, cine::Session::colorName(s.color), shutter, s.stage * 1000 + 100,
+                          s.colorMode, s.controls);
     c.save(out + "/" + s.id + ".ppm");
   }
   for (int selected = 0; selected < 3; ++selected)
@@ -226,7 +228,7 @@ int main(int argc, char **argv) {
       ui::drawBarGlyphs(c, 280, 38, 4, 99, false, true, false, "--:--", 0, false, false, false,
                         0xffff);
       std::string id = selected == 0   ? "settings-ss"
-                       : selected == 1 ? "settings-wb"
+                       : selected == 1 ? "settings-color"
                                        : "settings-back";
       if (editing)
         id += "-edit";

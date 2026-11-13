@@ -647,7 +647,7 @@ bool readJpegShutter(ShutterInfo* output){
  ShutterInfo value;const bool ok=jpegShutterRead(value);hal::bus::unlockI2c();if(ok)*output=value;return ok;
 }
 bool configureCineIsp(const CineIspRequest &request, CineIspReadback *output) {
-  if (!output || request.wbMode < 1 || request.wbMode > 4 ||
+  if (!output || !core::cine::validColor(request.colorMode) ||
       request.shutterUs < 1000 || request.shutterUs > 100000 || request.gainQ4 < 16 ||
       request.gainQ4 > core::cine::gainCeilingQ4 || !s_initialized || s_detectedPid != 0x3660 ||
       s_lastFb)
@@ -733,7 +733,7 @@ bool configureCineIsp(const CineIspRequest &request, CineIspReadback *output) {
     }
     const uint32_t capTicks =
         core::cine::shutterTicks(100000, shutter.hts, shutter.vts, shutter.clockHz);
-    // WB/target updates in Auto must not replay a stale startup exposure. Preserve
+    // Color/target updates in Auto must not replay a stale startup exposure. Preserve
     // live sub-millisecond integration too; only cap it when restoring native VTS.
     const uint32_t ticks =
         request.autoExposure
@@ -746,16 +746,15 @@ bool configureCineIsp(const CineIspRequest &request, CineIspReadback *output) {
     write(0x3502, ticks & 255);
     write(0x350a, (requestedGain >> 8) & 3);
     write(0x350b, requestedGain & 255);
-    // Driver preset values, or continuous sensor AWB; never estimate scene gray
-    // in userspace. Preserve geometry, disable lens shading and SDE adjustments.
-    const uint16_t wb[4][3] = {
-        {0x5e0, 0x410, 0x540}, {0x650, 0x410, 0x4f0}, {0x520, 0x410, 0x660}, {0x420, 0x3f0, 0x710}};
-    if (request.wbMode)
-      for (unsigned i = 0; i < 3; ++i) {
-        write(0x3400 + i * 2, wb[request.wbMode - 1][i] >> 8);
-        write(0x3401 + i * 2, wb[request.wbMode - 1][i] & 255);
-      }
-    write(0x3406, request.wbMode ? 1 : 0);
+    // Every Color mode starts with the same Sunny sensor WB. Color changes
+    // only gamma/CMX, never illuminant estimation or geometry.
+    const uint16_t sunnyWb[3] = {0x5e0, 0x410, 0x540};
+    for (unsigned i = 0; i < 3; ++i) {
+      write(0x3400 + i * 2, sunnyWb[i] >> 8);
+      write(0x3401 + i * 2, sunnyWb[i] & 255);
+    }
+    write(0x3406, 1);
+    const auto &profile = core::cine::colorProfile(core::cine::ColorMode(request.colorMode));
     write(0x5000, (old[15] | 0x21) & ~0x80);
     write(0x5001, (old[16] | 3) & ~0x80);
     // Zero manual sharpening offsets; denoise settings are held fixed.
@@ -765,9 +764,9 @@ bool configureCineIsp(const CineIspRequest &request, CineIspReadback *output) {
     write(0x530b, 0);
     write(0x530c, 0);
     for (unsigned i = 0; i < 16; ++i)
-      write(0x5481 + i, core::cine::gamma[i]);
+      write(0x5481 + i, profile.gamma[i]);
     for (unsigned i = 0; i < 11; ++i)
-      write(0x5381 + i, core::cine::matrix[i]);
+      write(0x5381 + i, profile.matrix[i]);
     if (request.autoExposure)
       write(0x3503, old[0] & ~3u);
     if (ok) {
@@ -788,7 +787,7 @@ bool configureCineIsp(const CineIspRequest &request, CineIspReadback *output) {
       }
       if (ok) {
         result.shutter.requestedUs = request.autoExposure ? 0 : requestedUs;
-        result.wbMode = request.wbMode;
+        result.colorMode = request.colorMode;
         result.valid = true;
         *output = result;
       }

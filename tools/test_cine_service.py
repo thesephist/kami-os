@@ -92,26 +92,27 @@ bool Session::configureCineIsp(const hal::camera::CineIspRequest& r,hal::camera:
 void Session::releaseIspPreview(){}
 bool Session::renderIspPreview(const hal::camera::CameraFrame&,bool(*abort)(void*),void* p){if(abort&&abort(p)){status_.previewInterrupted=true;return false;}return !failDecode;}
 }}
-int main(){using services::cine_camera::Session;using services::cine_camera::WhiteBalance;
+int main(){using services::cine_camera::Session;using services::cine_camera::ColorMode;
  {Session c;assert(c.open());}assert(!allocations&&!running&&!reserved);
  Session c;ready=false;assert(!c.open()&&!allocations);ready=true;
  failInit=true;assert(!c.open()&&!allocations&&!reserved);failInit=false;
  budget=0;assert(!c.open()&&!allocations&&!reserved);budget=-1;
  failRead=true;assert(!c.open()&&!allocations&&!reserved);failRead=false;
  failIsp=true;assert(!c.open()&&!allocations&&!reserved);failIsp=false;
- assert(c.open()&&c.autoExposure()&&c.whiteBalance()==WhiteBalance::Sunny&&!held&&allocations==1);
+ assert(c.open()&&c.autoExposure()&&c.colorMode()==ColorMode::Sunny&&!held&&allocations==1);
+ for(unsigned i=1;i<=6;++i){c.adjustColor(1);assert(unsigned(c.colorMode())==i%6&&last.colorMode==i%6);}c.adjustColor(-1);assert(c.colorMode()==ColorMode::Vivid);c.adjustColor(1);assert(c.colorMode()==ColorMode::Sunny);
  auto n=reads;assert(!c.preview([](void*){return true;})&&reads==n&&!held);
  for(unsigned abortAt:{2u,3u}){struct Calls{unsigned n,at;}calls{0,abortAt};assert(!c.preview([](void* p){auto& c=*static_cast<Calls*>(p);return ++c.n==c.at;},&calls)&&!held&&c.status().previewInterrupted);}
  assert(c.preview()&&!held);failDecode=true;assert(!c.preview()&&!held&&!c.status().previewInterrupted);failDecode=false;
  badFrame=true;assert(!c.preview()&&!held);badFrame=false;
- for(int delta:{1,-1,INT_MAX,INT_MIN}){c.adjustWhiteBalance(delta);assert(unsigned(c.whiteBalance())>=1&&unsigned(c.whiteBalance())<=4&&c.autoExposure());}
- liveUs=500;liveGain=160;assert(c.refreshExposure());c.adjustWhiteBalance(1);assert(c.autoExposure()&&last.shutterUs==1000&&last.gainQ4==128);
- liveGain=80;assert(c.refreshExposure());c.adjustWhiteBalance(1);assert(c.autoExposure()&&last.gainQ4==80);liveUs=10000;liveGain=128;
+ for(int delta:{1,-1,INT_MAX,INT_MIN}){c.adjustColor(delta);assert(unsigned(c.colorMode())<core::cine::colorCount&&c.autoExposure());}
+ liveUs=500;liveGain=160;assert(c.refreshExposure());c.adjustColor(1);assert(c.autoExposure()&&last.shutterUs==1000&&last.gainQ4==128);
+ liveGain=80;assert(c.refreshExposure());c.adjustColor(1);assert(c.autoExposure()&&last.gainQ4==80);liveUs=10000;liveGain=128;
  c.adjustShutter(INT_MAX);assert(!c.autoExposure()&&c.shutter().requestedUs==100000&&last.gainQ4==128);auto count=configs;c.adjustShutter(1);assert(configs==count);
- c.adjustWhiteBalance(1);assert(!c.autoExposure()&&c.shutter().requestedUs==100000&&last.gainQ4==128);
+ c.adjustColor(1);assert(!c.autoExposure()&&c.shutter().requestedUs==100000&&last.gainQ4==128);
  c.adjustShutter(INT_MIN);assert(c.shutter().requestedUs==1000);assert(c.resumeAutoExposure()&&c.autoExposure()&&last.autoVts==1564);count=configs;assert(c.resumeAutoExposure()&&configs==count);
  assert(!c.capture());clockUs+=1000000;assert(c.preview());stale=true;n=reads;assert(!c.capture()&&!held&&reads==n+4);stale=false;
- assert(c.capture()&&!held&&c.status().saved&&files[c.status().photoPath]==jpeg);std::string meta(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"jpeg_quantization_scale\":8")!=std::string::npos);assert(meta.find("\"automatic\":true")!=std::string::npos&&meta.find("\"sample_valid\":true")!=std::string::npos&&meta.find("\"output_width\":2048")!=std::string::npos);
+ assert(c.capture()&&!held&&c.status().saved&&files[c.status().photoPath]==jpeg);std::string meta(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"jpeg_quantization_scale\":8")!=std::string::npos);assert(meta.find("\"color_name\":")!=std::string::npos&&meta.find("\"wb_preset\":1")!=std::string::npos);assert(meta.find("\"automatic\":true")!=std::string::npos&&meta.find("\"sample_valid\":true")!=std::string::npos&&meta.find("\"output_width\":2048")!=std::string::npos);
  stale=true;assert(!c.capture());stale=false;
 #if ORIGAMI_CINE_PROFILING
  assert(c.profile().saveUs==0&&c.profile().totalUs==0);
@@ -120,7 +121,7 @@ int main(){using services::cine_camera::Session;using services::cine_camera::Whi
  failMeta=true;assert(c.capture()&&strstr(c.status().message,"metadata failed"));failMeta=false;
  failWrite=true;assert(!c.capture()&&!held&&!c.status().saved);failWrite=false;
  stopBlocked=true;assert(!c.close()&&running&&reserved&&allocations==1);stopBlocked=false;assert(c.close()&&!running&&!reserved&&!allocations);assert(c.close());
- assert(c.open());failIsp=true;c.adjustWhiteBalance(1);assert(!c.status().open&&!running&&!reserved&&!allocations);failIsp=false;
+ assert(c.open());failIsp=true;c.adjustColor(1);assert(!c.status().open&&!running&&!reserved&&!allocations);failIsp=false;
 }
 """,
     )

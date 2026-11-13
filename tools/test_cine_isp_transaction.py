@@ -46,9 +46,11 @@ int main(){using namespace hal::camera;
  assert((output.flags[0]&0x80)==0&&(output.flags[0]&0x21)==0x21&&(output.flags[1]&0x80)==0&&(output.flags[1]&3)==3);
  auto successful=registers;auto regs=writes;for(auto reg:regs){registers=initial;auto before=registers;writes.clear();failRegister=reg;bool ok=configureCineIsp(request,&output);if(ok||registers!=before)fprintf(stderr,"rollback reg=%x ok=%d auto=%d\n",reg,ok,request.autoExposure);assert(!ok&&registers==before);}
  registers=successful;writes.clear();auto before=registers;ShutterInfo measured;assert(readJpegShutter(&measured)&&measured.manual&&measured.actualUs==output.shutter.actualUs&&writes.empty()&&registers==before);
- const uint16_t expected[4][3]={{0x5e0,0x410,0x540},{0x650,0x410,0x4f0},{0x520,0x410,0x660},{0x420,0x3f0,0x710}};
- for(unsigned wb=1;wb<=4;++wb){request.wbMode=wb;assert(configureCineIsp(request,&output));for(unsigned c=0;c<3;++c)assert(output.wb[c]==expected[wb-1][c]);assert(registers[0x3406]==1);}
- for(unsigned wb:{0u,5u}){request.wbMode=wb;writes.clear();assert(!configureCineIsp(request,&output)&&writes.empty());}request.wbMode=1;
+ const uint16_t expected[3]={0x5e0,0x410,0x540};
+ for(unsigned mode=0;mode<core::cine::colorCount;++mode){writes.clear();request.colorMode=mode;assert(configureCineIsp(request,&output));for(unsigned c=0;c<3;++c)assert(output.wb[c]==expected[c]);assert(registers[0x3406]==1);const auto& p=core::cine::colorProfile(core::cine::ColorMode(mode));assert(output.colorMode==mode&&!memcmp(output.gamma,p.gamma,16)&&!memcmp(output.cmx,p.matrix,11));
+ // Every profile has the same rollback guarantee, including its distinct gamma/CMX.
+ auto modeWrites=writes;for(auto reg:modeWrites){auto before=registers;failRegister=reg;assert(!configureCineIsp(request,&output)&&registers==before);}}
+ for(unsigned mode:{core::cine::colorCount,255u}){request.colorMode=mode;writes.clear();assert(!configureCineIsp(request,&output)&&writes.empty());}request.colorMode=0;
  for(unsigned us:{999u,100001u}){request.shutterUs=us;assert(!configureCineIsp(request,&output));}request.shutterUs=10000;
  for(unsigned g:{15u,129u}){request.gainQ4=g;assert(!configureCineIsp(request,&output));}request.gainQ4=128;assert(configureCineIsp(request,&output)&&output.shutter.gainQ4==128);request.gainQ4=16;
  for(unsigned multiplier:{24u,30u}){registers[0x303b]=multiplier;uint32_t prior=0;for(auto us:core::cine::shutterSpeedsUs){request.shutterUs=us;assert(configureCineIsp(request,&output));assert(output.shutter.actualUs>prior&&output.shutter.actualUs<=100000);prior=output.shutter.actualUs;}}
@@ -57,10 +59,10 @@ int main(){using namespace hal::camera;
  assert(registers[0x3a0f]==48&&registers[0x3a10]==41&&registers[0x3a1b]==48&&registers[0x3a1e]==41&&registers[0x3a11]==96&&registers[0x3a1f]==20);
  assert(((registers[0x3a02]<<8)|registers[0x3a03])==1560);
  regs=writes;for(auto reg:regs){auto before=registers;failRegister=reg;bool ok=configureCineIsp(request,&output);if(ok||registers!=before)fprintf(stderr,"rollback reg=%x ok=%d auto=%d\n",reg,ok,request.autoExposure);assert(!ok&&registers==before);}
- // WB changes preserve live sub-millisecond Auto exposure and gain above the old 4x cap.
+ // Color changes preserve live sub-millisecond Auto exposure and gain above the old 4x cap.
  registers[0x350b]=80;assert(configureCineIsp(request,&output)&&output.shutter.gainQ4==80);
  registers[0x350b]=144;assert(configureCineIsp(request,&output)&&output.shutter.gainQ4==128);
- registers[0x3500]=0;registers[0x3501]=1;registers[0x3502]=0x23;request.wbMode=3;assert(configureCineIsp(request,&output)&&output.shutter.ticks==0x123&&!output.shutter.manual);
+ registers[0x3500]=0;registers[0x3501]=1;registers[0x3502]=0x23;request.colorMode=4;assert(configureCineIsp(request,&output)&&output.shutter.ticks==0x123&&!output.shutter.manual);
  for(auto bad:{1,2,3,4}){writes.clear();s_lastFb=bad==1?(void*)1:nullptr;s_detectedPid=bad==2?0x5640:0x3660;sensor.pixformat=bad==3?0:4;s_initialized=bad!=4;assert(!configureCineIsp(request,&output)&&writes.empty());}
 }
 """
@@ -82,5 +84,5 @@ int main(){using namespace hal::camera;
     )
     subprocess.run([str(p / "test")], check=True)
 print(
-    "PASS canonical ISP: exact gamma/vendor+1 bytes, four static WB modes, both JPEG clocks/shutter ladder, Auto bounds/live integration, ownership guards and every-register rollback; ASan/UBSan"
+    "PASS canonical ISP: exact gamma/vendor+1 bytes, six fixed-Sunny Color modes, both JPEG clocks/shutter ladder, Auto bounds/live integration, ownership guards and every-register rollback; ASan/UBSan"
 )

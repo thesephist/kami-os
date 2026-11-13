@@ -5,7 +5,7 @@
 class JPEGDEC;
 namespace services {
 namespace cine_camera {
-using WhiteBalance = core::cine::WhiteBalance;
+using ColorMode = core::cine::ColorMode;
 struct Status {
   bool open = false, saved = false, previewInterrupted = false;
   uint32_t sequence = 0;
@@ -37,9 +37,9 @@ public:
   bool resumeAutoExposure();
   bool refreshExposure();
   const hal::camera::ShutterInfo &shutter() const { return shutter_; }
-  void adjustWhiteBalance(int delta);
-  WhiteBalance whiteBalance() const { return wbPreset_; }
-  static const char *whiteBalanceName(WhiteBalance preset);
+  void adjustColor(int delta);
+  ColorMode colorMode() const { return colorMode_; }
+  static const char *colorName(ColorMode preset);
   const Status &status() const { return status_; }
   const uint16_t *pixels() const { return preview_; }
   static constexpr unsigned previewWidth = 224, previewHeight = 168;
@@ -52,7 +52,7 @@ private:
   camera::Session camera_;
   uint16_t *preview_ = nullptr, *previewWork_ = nullptr;
   JPEGDEC *ispDecoder_ = nullptr;
-  WhiteBalance wbPreset_ = WhiteBalance::Sunny;
+  ColorMode colorMode_ = ColorMode::Sunny;
   ExposureMode exposureMode_ = ExposureMode::Automatic;
   hal::camera::ShutterInfo shutter_;
   uint64_t shutterReadyUs_ = 0;
