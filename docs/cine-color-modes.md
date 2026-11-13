@@ -4,8 +4,8 @@ The Color wheel cycles and wraps in both directions:
 
 **Sunny → Gold → Portra → Mono → Cool → Vivid → Sunny**.
 
-Cine starts on Sunny with the wheel controlling shutter. Click the wheel to select
-Color; turn to cycle. Click again to return to shutter. The blue active row and
+Cine starts on Sunny with the wheel controlling Color, displayed above SS. Turn
+to cycle Color; click the wheel to switch to shutter. Click again to return to Color. The blue active row and
 both readouts appear for two seconds, then snap away. A opens Settings, which also
 has a Color row. Hold the wheel to restore Auto shutter/gain. Reopening starts on
 Sunny again; color selection is session-local.

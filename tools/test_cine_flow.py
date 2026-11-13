@@ -13,6 +13,18 @@ spec = importlib.util.spec_from_file_location(
 flow = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(flow)
 
+# Distinct color patches exercise all six current CMX profiles without UI pixels.
+patches = Image.new("RGB", (6, 1))
+patches.putdata([(180, 95, 55), (60, 160, 90), (65, 100, 190),
+                 (110, 110, 110), (200, 170, 125), (35, 60, 95)])
+looks = flow.emulated_color_photos(patches)
+assert len(looks) == 6 and looks[0].tobytes() == patches.tobytes()
+assert len({im.tobytes() for im in looks}) == 6
+mono_bytes = looks[3].tobytes()
+assert mono_bytes[0::3] == mono_bytes[1::3] == mono_bytes[2::3]
+# Mono has its own contrast treatment, beyond neutral desaturation.
+assert looks[3].getpixel((3, 0))[0] != patches.getpixel((3, 0))[0]
+
 with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
     directory = Path(td)
     photo = directory / "photo.png"
@@ -29,6 +41,11 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
     # lossless sheet-placement checks below; all six current modes are rendered.
     for mode in ["sunny", "gold", "portra", "mono", "cool", "vivid"]:
         assert "color-" + mode in frames
+    # Photo-region differences must exist before the independently colored UI.
+    region = (80, 110, 120, 150)
+    sunny = frames["color-sunny"].crop(region)
+    for mode in ("gold", "portra", "mono", "cool", "vivid"):
+        assert ImageChops.difference(sunny, frames["color-" + mode].crop(region)).getbbox(), mode
     # Native list geometry and the TFT midpoint-circle raster, not a smooth circle.
     assert menu.getpixel((14, 40)) == (255, 255, 255)
     assert menu.getpixel((19, 40)) == (0, 0, 0)

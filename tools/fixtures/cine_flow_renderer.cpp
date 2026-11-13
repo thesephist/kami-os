@@ -186,10 +186,13 @@ int main(int argc, char **argv) {
   assert(argc == 3 || argc == 4);
   const uint32_t reviewShutter = argc == 4 ? std::stoul(argv[3]) : 16667;
   std::string out = argv[2];
-  std::vector<uint16_t> photo(224 * 168);
-  FILE *f = fopen(argv[1], "rb");
-  assert(f && fread(photo.data(), 2, photo.size(), f) == photo.size());
-  fclose(f);
+  std::vector<std::vector<uint16_t>> photos(6, std::vector<uint16_t>(224 * 168));
+  for (unsigned mode = 0; mode < photos.size(); ++mode) {
+    const auto path = std::string(argv[1]) + std::to_string(mode) + ".rgb565";
+    FILE *f = fopen(path.c_str(), "rb");
+    assert(f && fread(photos[mode].data(), 2, photos[mode].size(), f) == photos[mode].size());
+    fclose(f);
+  }
   struct Frame {
     const char *id;
     unsigned color, stage;
@@ -210,7 +213,7 @@ int main(int argc, char **argv) {
                           {"save-failed", 0, 6, false, false, reviewShutter}};
   for (const auto &s : frames) {
     Canvas c;
-    ui::cine_view::image(c, photo.data(), 224, 168, s.stage == 1);
+    ui::cine_view::image(c, photos[s.color].data(), 224, 168, s.stage == 1);
     session.s.actualUs = s.shutter;
     session.automatic = !s.controls || s.colorMode || std::string(s.id) == "shutter-auto";
     char shutter[20];

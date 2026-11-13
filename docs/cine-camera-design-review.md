@@ -56,3 +56,19 @@ Run `python3 tools/test_cine_flow.py` or `python3 tools/run_fork_checks.py --sdk
 The focused check covers native menu geometry, system chrome, all six Color states,
 exact 2×/3× screenshot placement, transparency, and unchanged capture overrides.
 These tools do not change firmware behavior.
+
+## Color-mode emulation in review screens
+
+The supplied photograph is the Sunny reference and stays unchanged in Sunny.
+Other Color screens transform only that photograph before firmware chrome is
+drawn. The host model reads the current signed-Q7 CMX tables directly from
+`cine_isp.h` and `cine_film_matrices.h`, reconstructs a Sunny CMX input, applies
+the selected CMX, and converts YUV to RGB. Mono removes chroma and additionally
+remaps the Sunny gamma output knots onto the Mono output knots. The endpoint
+segment approximates the sensor's separate final gamma slope.
+
+This is a relative display-domain illustration, not calibrated sensor simulation:
+it cannot reproduce the original sensor WB, lost highlights, ISP processing
+order, or JPEG artifacts. Firmware text, icons, selection colors and menus are
+not graded. The same emulated backgrounds feed native screens and either diagram
+theme, and the manifest describes the approximation.

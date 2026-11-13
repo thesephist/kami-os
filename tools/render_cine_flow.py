@@ -1,7 +1,7 @@
 """Render the current Cine UI into one shareable flow PNG; never embeds the input photo in Git."""
 
 from pathlib import Path
-import argparse, json, math, struct, subprocess, tempfile
+import argparse, json, math, re, struct, subprocess, tempfile
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +16,73 @@ def function(source, signature):
         depth += (source[end] == "{") - (source[end] == "}")
         end += 1
     return source[start:end]
+
+
+def emulated_color_photos(photo):
+    """Relative Sunny→mode previews from canonical ISP tables, not sensor simulation.
+
+    The supplied encoded RGB photo represents Sunny. Reconstruct a CMX input via
+    the Sunny inverse, apply the selected CMX, then convert YUV back to RGB.
+    Mono additionally remaps the shared gamma output knots to its own knots.
+    This cannot reproduce sensor WB, clipping, ISP ordering or JPEG artifacts.
+    """
+    tables = "\n".join((ROOT / name).read_text() for name in (
+        "include/core/cine_isp.h", "include/core/cine_film_matrices.h"))
+
+    def table(name):
+        values = re.search(r"constexpr uint8_t " + name + r"\[\d+\] = \{([^}]+)\}", tables)
+        if not values:
+            raise ValueError("Missing canonical ISP table: " + name)
+        return [int(value) for value in values[1].split(",")]
+
+    def matrix(name):
+        values = table(name)
+        signs = (values[9] << 8) | values[10]
+        return [[(-1 if signs & (1 << (row * 3 + col)) else 1)
+                 * values[row * 3 + col] / 128 for col in range(3)] for row in range(3)]
+
+    def multiply(a, b):
+        return [[sum(a[i][k] * b[k][j] for k in range(3))
+                 for j in range(3)] for i in range(3)]
+
+    def inverse(a):
+        # Small Gauss-Jordan inverse; no scientific-Python dependency for diagrams.
+        rows = [list(row) + [float(i == j) for j in range(3)] for i, row in enumerate(a)]
+        for col in range(3):
+            pivot = max(range(col, 3), key=lambda i: abs(rows[i][col]))
+            rows[col], rows[pivot] = rows[pivot], rows[col]
+            scale = rows[col][col]
+            if abs(scale) < 1e-12:
+                raise ValueError("Singular preview matrix")
+            rows[col] = [value / scale for value in rows[col]]
+            for row in range(3):
+                if row != col:
+                    factor = rows[row][col]
+                    rows[row] = [a - factor * b for a, b in zip(rows[row], rows[col])]
+        return [row[3:] for row in rows]
+
+    yuv_to_rgb = [[1, 0, 1.402], [1, -.344136, -.714136], [1, 1.772, 0]]
+    sunny_to_seed = inverse(multiply(yuv_to_rgb, matrix("matrix")))
+    result = [photo.copy()]
+    for mode, name in enumerate(("goldMatrix", "portraMatrix", "monoMatrix", "coolMatrix", "vividMatrix"), 1):
+        transform = multiply(multiply(yuv_to_rgb, matrix(name)), sunny_to_seed)
+        coefficients = tuple(value for row in transform for value in (*row, 0))
+        image = photo.convert("RGB", coefficients)
+        if mode == 3:
+            # Fifteen output knots plus endpoints; the final ISP slope is only
+            # approximated by the endpoint segment for this display-domain mock.
+            xs = [0] + table("gamma")[:15] + [255]
+            ys = [0] + table("monoGamma")[:15] + [255]
+            lut = []
+            segment = 0
+            for value in range(256):
+                while value > xs[segment + 1]:
+                    segment += 1
+                t = (value - xs[segment]) / (xs[segment + 1] - xs[segment])
+                lut.append(round(ys[segment] + t * (ys[segment + 1] - ys[segment])))
+            image = image.point(lut * 3)
+        result.append(image)
+    return result
 
 
 def native_frames(image, output, shutter_us=16667):
@@ -40,18 +107,19 @@ def native_frames(image, output, shutter_us=16667):
             .convert("RGB")
             .resize((224, 168), Image.Resampling.BOX)
         )
-        pixels = photo.tobytes()
-        (p / "photo.rgb565").write_bytes(
-            b"".join(
-                struct.pack(
-                    "<H",
-                    ((pixels[i] >> 3) << 11)
-                    | ((pixels[i + 1] >> 2) << 5)
-                    | (pixels[i + 2] >> 3),
+        for mode, preview in enumerate(emulated_color_photos(photo)):
+            pixels = preview.tobytes()
+            (p / f"photo-{mode}.rgb565").write_bytes(
+                b"".join(
+                    struct.pack(
+                        "<H",
+                        ((pixels[i] >> 3) << 11)
+                        | ((pixels[i + 1] >> 2) << 5)
+                        | (pixels[i + 2] >> 3),
+                    )
+                    for i in range(0, len(pixels), 3)
                 )
-                for i in range(0, len(pixels), 3)
             )
-        )
         source = (ROOT / "src/apps/cine_camera_app.cpp").read_text()
         code = (
             (ROOT / "tools/fixtures/cine_flow_renderer.cpp")
@@ -149,7 +217,7 @@ def native_frames(image, output, shutter_us=16667):
             check=True,
         )
         subprocess.run(
-            [str(p / "render"), str(p / "photo.rgb565"), str(output), str(shutter_us)],
+            [str(p / "render"), str(p / "photo-"), str(output), str(shutter_us)],
             check=True,
         )
     return {f.stem: Image.open(f).convert("RGB") for f in output.glob("*.ppm")}
@@ -387,6 +455,7 @@ def render(
                             )
                             for key in states
                         },
+                        "preview_color": "host relative CMX emulation from current firmware tables; Mono output-knot remap; supplied photo is Sunny reference, not a sensor simulation",
                         "private_photo_committed": False,
                     },
                     indent=2,
@@ -825,7 +894,8 @@ def render(
             "states": list(cards),
             "ui_source": "production Cine raster / Scene builder / Instrument font",
             "home": "device capture" if home else "schematic context",
-            "private_photo_committed": False,
+            "preview_color": "host relative CMX emulation from current firmware tables; Mono output-knot remap; supplied photo is Sunny reference, not a sensor simulation",
+                        "private_photo_committed": False,
         }
         output.with_suffix(".json").write_text(json.dumps(manifest, indent=2) + "\n")
         print(output)
