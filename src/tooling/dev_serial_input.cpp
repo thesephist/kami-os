@@ -38,7 +38,6 @@
 #include "services/automation.h"
 #include "services/shipping.h"
 #include "apps/factory_test_app.h"
-#include "apps/photo_printer_app.h"
 #include "apps/cine_camera_app.h"
 #include "services/manufacturing_access.h"
 #include "core/release_policy.h"
@@ -3055,7 +3054,6 @@ static void handleLine(char* line, uint32_t nowMs) {
     const bool readOnly=core::manufacturingReadOnlyCommand(line);
     if(!readOnly){Serial.println("MFG ERR service-access-required");return;}
   }
-  if(apps::photo_printer::handleSerialCommand(line,Serial))return;
   if(apps::cine_camera::handleSerialCommand(line,Serial))return;
   if(tooling::handleDeviceApi(line,Serial))return;
 #if ORIGAMI_INPUT_TRACE

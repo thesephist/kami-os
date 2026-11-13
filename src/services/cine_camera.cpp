@@ -1,6 +1,5 @@
 #include "services/cine_camera.h"
 #include "services/photo_storage.h"
-#include "services/photo_print.h"
 #include "hal/hal_sd.h"
 #include "core/watchdog.h"
 #include "core/cine_shutter.h"
@@ -30,11 +29,6 @@ bool Session::open() {
   shutterReadyUs_ = 0;
   colorMode_ = ColorMode::Sunny;
   CINE_PROFILE(profile_ = {};)
-  if (!photo_print::readyForCapture()) {
-    snprintf(status_.message, sizeof(status_.message), "Printer task still finishing");
-    close();
-    return false;
-  }
   if (!photos::initialize() || !hal::sd::ensureDir("/cine")) {
     snprintf(status_.message, sizeof(status_.message), "SD unavailable");
     close();

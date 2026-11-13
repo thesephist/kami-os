@@ -1,7 +1,6 @@
 #include "apps/cine_camera_app.h"
 #include "services/cine_camera.h"
 #include "core/cine_controls.h"
-#include "services/photo_print.h"
 #include "services/vibration.h"
 #include "hal/hal_display.h"
 #include "hal/hal_input.h"
@@ -35,7 +34,7 @@ bool active = false;
 bool dirty = true;
 uint32_t lastInputSample = 0;
 // Keep the gap short between reduced-IDCT previews and input handling.
-uint32_t requestedAt = 0, lastPreview = 0;
+uint32_t lastPreview = 0;
 constexpr uint16_t bg = 0xFFFF, fg = 0x0000, muted = 0x632C;
 #if ORIGAMI_CINE_DIAGNOSTICS
 const char *viewName() {
@@ -74,9 +73,7 @@ void exit() {
 void cover() { close(); }
 void begin() {
   wheel.reset();
-  services::photo_print::cancelEndpointPoll();
   current = View::Opening;
-  requestedAt = millis();
   invalidate();
   ui::showAppOpeningSplash("Cine camera");
 }
@@ -114,16 +111,11 @@ void tick(uint32_t) {
     invalidate();
   }
   if (current == View::Opening) {
-    if (services::photo_print::readyForCapture()) {
-      current = session.open() ? View::Preview : View::Error;
-      if (current == View::Error)
-        session.close();
-      lastPreview = millis();
-      invalidate();
-    } else if (uint32_t(now - requestedAt) > 15000) {
-      current = View::Error;
-      invalidate();
-    }
+    current = session.open() ? View::Preview : View::Error;
+    if (current == View::Error)
+      session.close();
+    lastPreview = millis();
+    invalidate();
   } else if (current == View::Preview && uint32_t(now - lastPreview) >= 1u) {
     if (session.preview(previewShouldAbort))
       invalidate();

@@ -15,6 +15,9 @@ cache = Path(
 nm = cache / "packages/toolchain-xtensa-esp32s3/bin/xtensa-esp32s3-elf-nm"
 symbols = subprocess.check_output([str(nm), "-S", "-C", str(a.elf)], text=True)
 legacy = [
+    "apps::hello_world::",
+    "apps::photo_printer::",
+    "services::photo_print::",
     "ToneMap::",
     "meterBayer",
     "benchmarkIspResize",
@@ -49,7 +52,7 @@ for name in ["hal::input::s_trace", "hal::input::s_traceArchive"]:
 assert "hal::camera::configureCineIsp" in symbols
 assert "hal::camera::getFrame" in symbols
 print(
-    "PASS canonical Cine linked once; "
+    "PASS removed example/print apps absent; canonical Cine linked once; "
     + (
         "diagnostic commands/profile/trace present"
         if a.diagnostics

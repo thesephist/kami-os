@@ -54,10 +54,6 @@ namespace services{namespace photos{struct Target{uint32_t sequence=0;char path[
 """,
     )
     put(
-        "services/photo_print.h",
-        "#pragma once\nnamespace services{namespace photo_print{bool readyForCapture();}}\n",
-    )
-    put(
         "hal/hal_sd.h",
         "#pragma once\n#include <stddef.h>\n#include <stdint.h>\nnamespace hal{namespace sd{bool ensureDir(const char*);bool writeFile(const char*,const uint8_t*,size_t);}}\n",
     )
@@ -71,13 +67,13 @@ namespace services{namespace photos{struct Target{uint32_t sequence=0;char path[
 #include <vector>
 #include <map>
 #include <string>
-int allocations=0,budget=-1;int64_t clockUs=0;bool running=false,reserved=false,held=false,ready=true,stopBlocked=false,failInit=false,failRead=false,failDecode=false,failWrite=false,failMeta=false,failTelemetry=false,failIsp=false,stale=false,badFrame=false;
+int allocations=0,budget=-1;int64_t clockUs=0;bool running=false,reserved=false,held=false,stopBlocked=false,failInit=false,failRead=false,failDecode=false,failWrite=false,failMeta=false,failTelemetry=false,failIsp=false,stale=false,badFrame=false;
 unsigned liveUs=10000,liveGain=32;
 unsigned sequence=0,reads=0,configs=0;hal::camera::CineIspRequest last;std::vector<uint8_t> jpeg={255,216,1,2,255,217};std::map<std::string,std::vector<uint8_t>> files;
 namespace hal{namespace camera{
 bool readJpegShutter(ShutterInfo* p){if(failTelemetry)return false;p->valid=true;p->manual=false;p->actualUs=liveUs;p->gainQ4=liveGain;p->vts=1564;p->frameUs=75000;return true;}
 }namespace sd{bool ensureDir(const char*){return true;}bool writeFile(const char* path,const uint8_t* data,size_t n){if(failMeta)return false;files[path].assign(data,data+n);return true;}}}
-namespace services{namespace photo_print{bool readyForCapture(){return ready;}}namespace photos{
+namespace services{namespace photos{
 bool initialize(){return true;}Target prepare(){Target t;t.sequence=++sequence;snprintf(t.path,sizeof(t.path),"/photos/IMG_%05u.jpg",sequence);return t;}
 bool write(const Target& t,const uint8_t* data,size_t n){if(failWrite)return false;files[t.path].assign(data,data+n);return true;}
 }namespace camera{
@@ -94,7 +90,7 @@ bool Session::renderIspPreview(const hal::camera::CameraFrame&,bool(*abort)(void
 }}
 int main(){using services::cine_camera::Session;using services::cine_camera::ColorMode;
  {Session c;assert(c.open());}assert(!allocations&&!running&&!reserved);
- Session c;ready=false;assert(!c.open()&&!allocations);ready=true;
+ Session c;
  failInit=true;assert(!c.open()&&!allocations&&!reserved);failInit=false;
  budget=0;assert(!c.open()&&!allocations&&!reserved);budget=-1;
  failRead=true;assert(!c.open()&&!allocations&&!reserved);failRead=false;

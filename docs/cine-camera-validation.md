@@ -1,5 +1,10 @@
 # Cine review validation
 
+Current source no longer contains Hello World or Photo Printer. Printer-specific
+Cine startup waits were removed with the printer worker. The entries below are
+historical results for their named builds; references to retained printer hooks
+describe those earlier revisions.
+
 Local artifact paths in this historical log were migrated into `kami-os/.local/lab/`. Every `.origami/...` reference below resolves as `.local/lab/.origami/...` relative to this repository. Firmware, RAW and image bytes were preserved; path-bearing files were relocated with originals retained in the private migration archive. SDK/retired build caches live separately in `~/.cache/kami-os`.
 
 

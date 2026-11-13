@@ -12,7 +12,6 @@
  */
 
 #include "apps/menu_app.h"
-#include "apps/photo_printer_app.h"
 #include "apps/cine_camera_app.h"
 #include "apps/tutorial_app.h"
 
@@ -101,7 +100,6 @@ static const MenuEntry kTimeEntries[] = {
 };
 
 static const MenuEntry kCustomAppEntries[] = {
-    {"Photo Printer", &apps::photo_printer::app, PAGE_COUNT, icons::kCamera},
     {"Cine camera", &apps::cine_camera::app, PAGE_COUNT, icons::kCamera},
     {"Productivity", nullptr, PAGE_PRODUCTIVITY, icons::kTools},
 };

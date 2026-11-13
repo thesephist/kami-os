@@ -52,7 +52,6 @@ static constexpr Spec kSpecs[] = {
     { "camera_audio", CORE_SVC,   PRIO_REALTIME,     6144 },
     { "video_capture",CORE_SVC,   PRIO_SERVICE,      4096 },
     { "video_preview",CORE_SVC,   PRIO_BACKGROUND,   6144 },
-    { "photo_print",  CORE_SVC,   PRIO_BACKGROUND,  10240 },
 };
 
 static_assert(sizeof(kSpecs) / sizeof(kSpecs[0]) == (size_t)Id::_Count,

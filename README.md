@@ -1,4 +1,4 @@
-> **thesephist/kami-os fork.** Based on upstream `cf3d1ce` (v1.0.5 + legacy recovery fix). Adds Cine camera, Photo Printer, and a faster newest-first Photos gallery with wraparound. Home B opens Cine; the built-in Camera remains available in the application selector.
+> **thesephist/kami-os fork.** Based on upstream `cf3d1ce` (v1.0.5 + legacy recovery fix). Adds Cine camera and a faster newest-first Photos gallery with wraparound. Home B opens Cine; the built-in Camera remains available in the application selector.
 >
 > Cine defaults to Sunny WB and **C+0 S+1 · B0**: the sensor sRGB approximation, exact vendor +1 saturation matrix, and native 3MP JPEG saves. See [stock/Cine differences](docs/cine-camera-review.md) and [validation](docs/cine-camera-validation.md).
 
@@ -22,7 +22,7 @@ Host checks require Python 3 and a C++ compiler with AddressSanitizer/UndefinedB
 
 Private local work lives in `.local/lab/` (ignored by Git): RAW captures, photo comparisons, retained firmware/recovery records, experiment recipes, and historical handoff source. Historical `.origami/...` evidence paths in the validation notes now resolve under `.local/lab/.origami/...`. The old standalone scratch directory has been retired; `.local/lab/.origami/migration/` contains the checksum inventory and exact pre-relocation text originals. These private records are preserved data; toolchain and retired build caches are separate in `~/.cache/kami-os`.
 
-`main` tracks this fork's `origin/main`; `upstream` is the original source repository. Tag `cine-baseline-c0-s1-b0-20261109` preserves the tested firmware before the cleanup pass. Tag `pre-upstream-sync-20261109` preserves the published v1.0.4-based fork before rebasing onto upstream v1.0.5. Diagnostic builds inspect the canonical pipeline; legacy RAW/ISP/resize experiments remain in Git history. The JPEG compression study is documented in [the experiment report](docs/cine-jpeg-compression-study.md). Printer credentials and Wi-Fi settings are provisioned on-device, never in Git.
+`main` tracks this fork's `origin/main`; `upstream` is the original source repository. Tag `cine-baseline-c0-s1-b0-20261109` preserves the tested firmware before the cleanup pass. Tag `pre-upstream-sync-20261109` preserves the published v1.0.4-based fork before rebasing onto upstream v1.0.5. Diagnostic builds inspect the canonical pipeline; legacy RAW/ISP/resize experiments remain in Git history. The JPEG compression study is documented in [the experiment report](docs/cine-jpeg-compression-study.md). Wi-Fi settings are provisioned on-device, never in Git.
 
 ---
 
