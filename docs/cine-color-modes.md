@@ -16,12 +16,12 @@ Mono, gamma change. Preview and saved 2048×1536 JPEG share those sensor setting
 
 | Mode | Selected reference | ISP implementation |
 |---|---|---|
-| Sunny | Existing baseline | Original sRGB approximation and vendor saturation +1 matrix, byte-for-byte |
-| Gold | G5, Gold color only | Quantized 3×3 fit to modeled Gold 200 + Portra Endura color response; original Y/gamma |
-| Portra | P5, Portra 400 color only | Quantized 3×3 fit to modeled Portra 400 + Portra Endura color response; original Y/gamma |
+| Sunny | Existing baseline | Original sRGB curve and vendor +1 matrix with the shared greenward tint correction |
+| Gold | G5, Gold color only | Quantized Gold color fit plus shared greenward tint correction; original Y/gamma |
+| Portra | P5, Portra 400 color only | Quantized Portra 400 color fit plus shared greenward tint correction; original Y/gamma |
 | Mono | M5, classic silver | Original Y coefficients, zero chroma, classic contrast composed into gamma knots |
 | Cool | C5, balanced green | Exact selected matrix bytes; original gamma |
-| Vivid | V5, neutral vivid | Exact selected matrix bytes; original gamma |
+| Vivid | V5, neutral vivid | Selected V5 matrix plus shared greenward tint correction; original gamma |
 
 ## Approximation and runtime
 
@@ -34,8 +34,8 @@ nine magnitudes plus two sign bytes. Neutral casts are model-derived, not change
 to sensor white balance. The comparison scenes below were not the eight images
 used to sample training colors.
 
-Host approximation errors against the selected reference renders (absolute RGB
-8-bit code differences; approximate ISP model, not device calibration):
+Original fit errors before the shared tint correction, against G5/P5 reference
+renders (absolute RGB 8-bit code differences; host model, not device calibration):
 
 | Scene | Gold mean / p95 | Portra mean / p95 |
 |---|---|---|
@@ -55,7 +55,7 @@ lookup, software encoder or camera resolution switch. Continuous AE/AGC,
 manual shutter/gain handoff, 8× gain ceiling, QS8 encoding and decoder ownership
 remain the existing production path. Captures wait for fresh frames after a
 profile change. Every photo's version-3 metadata records `color_mode`,
-`color_name`, `color_version`, and `wb_preset: 1` alongside actual exposure.
+`color_name`, `color_version: 2`, and `wb_preset: 1` alongside actual exposure.
 
 ## Reproducible profile data
 
@@ -63,12 +63,12 @@ The canonical table lives in `include/core/cine_isp.h`; Gold/Portra fitted data 
 isolated in `include/core/cine_film_matrices.h` under its own data license.
 Sunny/Cool/Vivid use the normal gamma; Mono's gamma and all selected matrices:
 
-- **Sunny** CMX bytes: `29,96,3,13,132,145,138,118,20,1,152`.
-- **Gold** CMX bytes: `29,96,3,29,118,146,140,80,59,1,152`.
-- **Portra** CMX bytes: `29,96,3,16,143,158,124,49,75,1,152`.
+- **Sunny** CMX bytes: `29,96,3,14,134,145,137,122,20,1,152`.
+- **Gold** CMX bytes: `29,96,3,30,120,146,139,84,59,1,152`.
+- **Portra** CMX bytes: `29,96,3,17,145,158,123,53,75,1,152`.
 - **Mono** CMX bytes: `29,96,3,0,0,0,0,0,0,0,0`.
 - **Cool** CMX bytes: `29,96,3,10,115,137,127,121,19,1,152`.
-- **Vivid** CMX bytes: `29,96,3,15,167,188,178,157,26,1,152`.
+- **Vivid** CMX bytes: `29,96,3,16,169,188,177,161,26,1,152`.
 
 Mono gamma bytes: `24,40,65,101,115,128,139,148,157,165,180,193,215,231,244,16`.
 
@@ -117,3 +117,21 @@ Static RAM remains **223,364 bytes**; flash use is **5,284,825 bytes**, 112 byte
 above the previous production build. No sensor-to-screen timing benchmark was
 performed for this parameter-only change. The device was left on Home, camera
 closed, with USB service access closed.
+
+## Shared tint correction
+
+The accepted C3→C5 purple-cast adjustment is now shared by Sunny, Gold, Portra
+and Vivid. Nominally it is `U -= 0.025 * Y; V -= 0.045 * Y`. Its exact
+quantized C5-minus-C3 signed-Q7 deltas are `U [-1,-2,0]`, `V [-1,-4,0]`.
+Cool already contains the correction and is unchanged; Mono removes chroma
+and is unchanged. This applies the correction once per look rather than
+re-applying it to Cool or tinting Mono. The sensor Sunny WB gains, all Y rows,
+gamma curves, shutter/gain behavior and JPEG path are unchanged. This is a
+shared aesthetic correction, not a measurement/calibration of sensor WB.
+Shot metadata uses color revision 2 to distinguish the revised looks.
+
+The shared-tint firmware was rebuilt and installed on the scratch Kami. All 21
+fork checks and all six native on-device captures passed at color revision 2,
+including unchanged WB/exposure, neutral Mono, controls/wrap and Auto restore.
+Protected metadata was preserved. RAM/flash use match the preceding build,
+and the device was left on Home with USB service closed.

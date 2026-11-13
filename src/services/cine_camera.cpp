@@ -258,7 +258,7 @@ bool Session::capture() {
                          "{\"version\":3,\"mode\":\"Cine ISP 3MP\",\"source\":\"sensor ISP "
                          "JPEG\",\"output_width\":2048,\"output_height\":1536,"
                          "\"jpeg_quantization_scale\":%u,"
-                         "\"color_profile\":\"sensor-ISP\",\"color_version\":1,"
+                         "\"color_profile\":\"sensor-ISP\",\"color_version\":2,"
                          "\"color_mode\":%u,\"color_name\":\"%s\",\"gamma\":\"%s\",\"wb_preset\":1,"
                          "\"shutter\":{\"sample_valid\":%s,\"sample_source\":\"%s\","
                          "\"automatic\":%s,\"ae_level\":%s,\"manual\":%s,"

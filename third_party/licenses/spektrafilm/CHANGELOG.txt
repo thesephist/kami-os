@@ -9,3 +9,8 @@ Least-squares fit of UV rows to natural-image colors and moderate synthetic colo
 fixed Sunny Y row, no affine offset. Quantized signed Q7, magnitudes/signs encoded
 for OV3660 0x5381-0x538B. This approximates nonlinear data; it is not a full film model.
 No spektrafilm simulator source or full LUT is compiled into firmware.
+
+2026-11-12: Applied the shared Sunny greenward correction to the fitted Gold/Portra
+matrices. Exact signed-Q7 row deltas: U [-1,-2,0], V [-1,-4,0], Y unchanged.
+This is the existing quantized C5-minus-C3 correction (nominal -0.025Y/-0.045Y).
+Gamma, WB gains and original fitted profile attribution are unchanged.
