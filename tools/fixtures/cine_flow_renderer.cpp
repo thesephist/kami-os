@@ -202,6 +202,7 @@ int main(int argc, char **argv) {
   const Frame frames[] = {{"live", 0, 0, false, false, reviewShutter},
                           {"shutter", 0, 0, true, false, reviewShutter},
                           {"shutter-auto", 0, 0, true, false, reviewShutter},
+                          {"shutter-mono", 3, 0, true, false, reviewShutter},
                           {"color-sunny", 0, 0, true, true, reviewShutter},
                           {"color-gold", 1, 0, true, true, reviewShutter},
                           {"color-portra", 2, 0, true, true, reviewShutter},

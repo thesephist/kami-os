@@ -72,3 +72,8 @@ it cannot reproduce the original sensor WB, lost highlights, ISP processing
 order, or JPEG artifacts. Firmware text, icons, selection colors and menus are
 not graded. The same emulated backgrounds feed native screens and either diagram
 theme, and the manifest describes the approximation.
+
+The focused flow uses Mono for the Color adjustment and linked shutter adjustment
+screens, so the selected mode has a visibly matching emulated photo in both.
+Startup and saved feedback remain Sunny; the Settings cards show a separately
+labeled Sunny example.

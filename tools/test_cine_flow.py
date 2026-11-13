@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
     frames_dir = directory / "native"
     frames_dir.mkdir()
     frames = flow.native_frames(photo, frames_dir, 40001)
-    assert len(frames) == 20 and all(im.size == (280, 240) for im in frames.values())
+    assert len(frames) == 21 and all(im.size == (280, 240) for im in frames.values())
     menu = frames["settings-ss"]
     # Color replaces the old WB menu row, so the 2026-11-09 pre-Color
     # framebuffer digests no longer apply. Keep the native geometry/font and
@@ -69,6 +69,8 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
     flow.render(photo, output, home, "focused-dark", shutter_us=40001)
     manifest = json.loads(output.with_suffix(".json").read_text())
     assert len(manifest["states"]) == 7 and manifest["scale"] == 2
+    assert "color-mono" in manifest["states"] and "shutter-mono" in manifest["states"]
+    assert "supplied photo" in manifest["state_sources"]["color-mono"]
     assert len(manifest["exported_screens"]) == len(frames) + 1
     screens_dir = output.parent / (output.stem + "-screens")
     assert all(Image.open(screens_dir / (key + ".png")).size == (280, 240)
@@ -79,8 +81,8 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
         (0, 310, "home"),
         (1, 310, "live"),
         (2, 310, "saved"),
-        (0, 1000, "color-sunny"),
-        (1, 1000, "shutter"),
+        (0, 1000, "color-mono"),
+        (1, 1000, "shutter-mono"),
         (0, 1690, "settings-ss"),
         (1, 1690, "settings-ss-edit"),
     ]:
@@ -102,7 +104,7 @@ with tempfile.TemporaryDirectory(prefix="cine-flow-check-") as td:
         outside = high.copy() if transparent else None
         for col, y, key in [
             (0, 310, "home"), (1, 310, "live"), (2, 310, "saved"),
-            (0, 1000, "color-sunny"), (1, 1000, "shutter"),
+            (0, 1000, "color-mono"), (1, 1000, "shutter-mono"),
             (0, 1690, "settings-ss"), (1, 1690, "settings-ss-edit"),
         ]:
             x, yy = round((80 + col * 700) * 1.5), round((y + 52) * 1.5)

@@ -322,16 +322,16 @@ def focused_sheet(frames, screen_scale=2, transparent=False):
     card(
         0,
         1000,
-        "color-sunny",
+        "color-mono",
         "04   Adjust color",
-        "The wheel starts in Color. Turn cycles Sunny, Gold, Portra, Mono, Cool and Vivid; exposure stays Auto.",
+        "Turn cycles Sunny, Gold, Portra, Mono, Cool and Vivid. This example selects Mono; exposure stays Auto.",
     )
     card(
         1,
         1000,
-        "shutter",
+        "shutter-mono",
         "05   Adjust shutter",
-        "C switches to SS with a haptic. Turning selects a manual shutter from 1/1000–1/10s. C returns to Color.",
+        "C switches to SS, retaining Mono. Turn selects a manual shutter from 1/1000–1/10s. C returns to Color.",
     )
     arrow(660, 760, 1285, "C", reverse=True)
     note(
@@ -346,7 +346,7 @@ def focused_sheet(frames, screen_scale=2, transparent=False):
         1690,
         "settings-ss",
         "06   Settings",
-        "A from the viewfinder opens this list. Turn to browse; C starts editing.",
+        "Sunny settings example. A opens this list; turn to browse and C to edit.",
     )
     card(
         1,
@@ -449,7 +449,8 @@ def render(
                                 )
                                 else (
                                     "production renderer with supplied photo"
-                                    if key in ("live", "saved", "shutter", "color-sunny")
+                                    if key in ("live", "saved", "shutter")
+                                    or key.startswith(("color-", "shutter-"))
                                     else "production renderer; illustrative system status"
                                 )
                             )
