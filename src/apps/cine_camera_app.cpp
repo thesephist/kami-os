@@ -28,22 +28,11 @@ enum class View { Menu, Opening, Preview, Error };
 View current = View::Menu;
 unsigned feedbackStage = 0;
 uint32_t feedbackAt = 0;
-#if ORIGAMI_CINE_DIAGNOSTICS
-bool active = false;
-#endif
 bool dirty = true;
 uint32_t lastInputSample = 0;
 // Keep the gap short between reduced-IDCT previews and input handling.
 uint32_t lastPreview = 0;
 constexpr uint16_t bg = 0xFFFF, fg = 0x0000, muted = 0x632C;
-#if ORIGAMI_CINE_DIAGNOSTICS
-const char *viewName() {
-  return current == View::Preview   ? "preview"
-         : current == View::Opening ? "opening"
-         : current == View::Error   ? "error"
-                                    : "menu";
-}
-#endif
 void invalidate() {
   dirty = true;
   hal::display::markAllDirty();
@@ -58,17 +47,11 @@ bool close(bool keepReservation = false) {
 void begin();
 void draw(TFT_eSprite &);
 void activate() {
-#if ORIGAMI_CINE_DIAGNOSTICS
-  active = true;
-#endif
   feedbackStage = 0;
   begin();
 }
 void exit() {
   close();
-#if ORIGAMI_CINE_DIAGNOSTICS
-  active = false;
-#endif
 }
 void cover() { close(); }
 void begin() {
@@ -224,9 +207,6 @@ void draw(TFT_eSprite &canvas) {
                           feedbackStage * 1000 +
                               (millis() - feedbackAt < 999 ? millis() - feedbackAt : 999),
                           wheel.color(), wheel.shown(millis()));
-#if ORIGAMI_CINE_PROFILING
-    session.previewDrawn();
-#endif
   } else
     view.render(canvas);
   dirty = false;
@@ -337,75 +317,5 @@ App app = [] {
   a.onPowerHold = holdWheel;
   return a;
 }();
-#if ORIGAMI_CINE_DIAGNOSTICS
-bool handleSerialCommand(const char *line, Print &output) {
-  if (strncmp(line, "cine ", 5))
-    return false;
-  if (!strcmp(line, "cine open")) {
-    NavHandler::instance().push(&app);
-    return true;
-  }
-  if (!strcmp(line, "cine status")) {
-    const auto &s = session.status();
-    output.printf("[cine] status active=%u state=%s sequence=%lu saved=%u photo=%s meta=%s\n",
-                  active, viewName(), (unsigned long)s.sequence, s.saved, s.photoPath,
-                  s.metadataPath);
-    return true;
-  }
-  if (!active) {
-    output.println("[cine] rejected: open Cine camera first");
-    return true;
-  }
-  if (!strcmp(line, "cine controls")) {
-    output.printf("[cine-controls] mode=%s popup=%u\n", wheel.color() ? "color" : "shutter",
-                  wheel.visible());
-    return true;
-  }
-  if (!strcmp(line, "cine shutter")) {
-    if (session.autoExposure())
-      session.refreshExposure();
-    const auto &s = session.shutter();
-    output.printf("[cine] shutter valid=%u manual=%u requested_us=%lu actual_us=%lu gain_q4=%u "
-                  "frame_us=%lu\n",
-                  s.valid, s.manual, (unsigned long)s.requestedUs, (unsigned long)s.actualUs,
-                  s.gainQ4, (unsigned long)s.frameUs);
-    return true;
-  }
-  if (!strcmp(line, "cine color")) {
-    output.printf("[cine] color=%u name=%s\n", unsigned(session.colorMode()),
-                  cine::Session::colorName(session.colorMode()));
-    return true;
-  }
-#if ORIGAMI_CINE_PROFILING
-  if (!strcmp(line, "cine startup")) {
-    const auto &p = session.profile();
-    output.printf("[cine-startup] total_us=%lu prepare_us=%lu init_us=%lu ae_us=%lu isp_us=%lu "
-                  "first_preview_us=%lu ae_stable=%u\n",
-                  (unsigned long)p.startupUs, (unsigned long)p.startupPrepareUs,
-                  (unsigned long)p.startupInitUs, (unsigned long)p.startupAeUs,
-                  (unsigned long)p.startupIspUs, (unsigned long)p.startupPreviewUs,
-                  p.startupAeStable);
-    return true;
-  }
-  if (!strcmp(line, "cine capture-status")) {
-    const auto &p = session.profile();
-    output.printf("[cine-capture] frame_us=%lu save_us=%lu total_us=%lu\n",
-                  (unsigned long)p.frameUs, (unsigned long)p.saveUs, (unsigned long)p.totalUs);
-    return true;
-  }
-  if (!strcmp(line, "cine latency")) {
-    const auto &p = session.profile();
-    output.printf("[cine] latency frames=%lu read_us=%lu render_us=%lu dma_age_us=%lu "
-                  "drawn_age_us=%lu interval_us=%lu\n",
-                  (unsigned long)p.frames, (unsigned long)p.previewReadUs,
-                  (unsigned long)p.previewUs, (unsigned long)p.previewAgeUs,
-                  (unsigned long)p.previewDrawAgeUs, (unsigned long)p.previewIntervalUs);
-    return true;
-  }
-#endif
-  output.println("[cine] use open/status/controls/shutter/wb/startup/latency/capture-status");
-  return true;
-}
-#endif
 } // namespace cine_camera
 } // namespace apps

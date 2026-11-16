@@ -37,8 +37,7 @@ policy is not specified by our code. Gain through 8x is in the sensor's analog
 range; no additional digital gain is enabled. Manual shutter freezes the latest
 live gain, including values above 4x, until Auto is restored.
 
-In the diagnostic build, `cine shutter` reads fresh live exposure telemetry in Auto. Capture sidecars
-record the automatic flag, AE target, sample validity and source. Auto's exposure
+Capture sidecars record the automatic flag, AE target, sample validity and source. Auto's exposure
 sample is read near frame receipt; it is not embedded per-frame sensor metadata.
 A failed sample is recorded as unavailable and does not disable future captures.
 

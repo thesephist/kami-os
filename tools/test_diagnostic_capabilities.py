@@ -12,10 +12,7 @@ with tempfile.TemporaryDirectory() as directory:
 #ifndef ENABLED
 #define ENABLED 0
 #endif
-static_assert(ORIGAMI_CINE_DIAGNOSTICS==ENABLED,"Cine commands");
-static_assert(ORIGAMI_CINE_PROFILING==ENABLED,"Cine timing");
 static_assert(ORIGAMI_INPUT_TRACE==ENABLED,"encoder trace");
-static_assert(ORIGAMI_INPUT_PROFILING==ENABLED,"button cadence");
 int main(){}
 """
     )
@@ -31,10 +28,7 @@ int main(){}
     flags = [
         "-D" + name + "=1"
         for name in [
-            "ORIGAMI_CINE_DIAGNOSTICS",
-            "ORIGAMI_CINE_PROFILING",
             "ORIGAMI_INPUT_TRACE",
-            "ORIGAMI_INPUT_PROFILING",
         ]
     ]
     subprocess.run(base + ["-DENABLED=1"] + flags, check=True)
@@ -64,5 +58,5 @@ int main(){}
             != 0
         )
 print(
-    "PASS production instrumentation defaults off, explicit diagnostic capabilities and official-release/invalid-flag rejection"
+    "PASS upstream encoder tracing defaults off; explicit opt-in and official-release/invalid-flag rejection"
 )

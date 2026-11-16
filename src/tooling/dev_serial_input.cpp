@@ -1,4 +1,3 @@
-#include "hal/hal_input_cadence.h"
 #include "services/ggwave_receiver.h"
 #include "hal/hal_encoder_trace.h"
 #if defined(KAMI_GAMES) && KAMI_GAMES
@@ -43,7 +42,6 @@
 #include "services/automation.h"
 #include "services/shipping.h"
 #include "apps/factory_test_app.h"
-#include "apps/cine_camera_app.h"
 #include "services/manufacturing_access.h"
 #include "core/release_policy.h"
 #include "services/factory_test.h"
@@ -3089,7 +3087,6 @@ static void handleLine(char* line, uint32_t nowMs) {
     const bool readOnly=core::manufacturingReadOnlyCommand(line);
     if(!readOnly){Serial.println("MFG ERR service-access-required");return;}
   }
-  if(apps::cine_camera::handleSerialCommand(line,Serial))return;
   if(tooling::handleDeviceApi(line,Serial))return;
 #if ORIGAMI_INPUT_TRACE
   if(!strcmp(line,"encoder trace start") || !strcmp(line,"encoder trace stop") || !strncmp(line,"encoder trace read ",19)) {
@@ -3494,21 +3491,6 @@ static void handleLine(char* line, uint32_t nowMs) {
     Serial.println("[ota-prompt-test] queued=1");
     return;
   }
-#if ORIGAMI_INPUT_PROFILING
-  if (strcmp(line, "input cadence start") == 0) {
-    hal::input::startButtonCadence();
-    Serial.println("[button-cadence] started");
-    return;
-  }
-  if (strcmp(line, "input cadence stop") == 0 || strcmp(line, "input cadence status") == 0) {
-    const auto stats = hal::input::buttonCadence(strcmp(line, "input cadence stop") == 0);
-    Serial.printf("[button-cadence] samples=%lu failures=%lu max_gap_us=%lu span_us=%llu blind20_us=%llu blind50_us=%llu blind100_us=%llu\n",
-      (unsigned long)stats.samples, (unsigned long)stats.failures, (unsigned long)stats.maxGapUs,
-      (unsigned long long)stats.spanUs, (unsigned long long)stats.blind20Us,
-      (unsigned long long)stats.blind50Us, (unsigned long long)stats.blind100Us);
-    return;
-  }
-#endif
   if (strcmp(line, "runtime status") == 0) {
     const auto policy=NavHandler::instance().runtimePolicy();
     Serial.printf("[runtime-policy] steps=%u idle_return=%u battery_sleep=%u activity=%u depth=%d power_sleep=%u\n",

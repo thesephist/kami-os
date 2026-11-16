@@ -18,7 +18,8 @@ Hardware changes also require focused testing on the matching board. A successfu
 
 Cine development keeps one canonical camera pipeline. `./build.sh` builds the
 production target; `./build.sh --diagnostics` builds the same pipeline with
-explicit inspection/profiling/input-trace capabilities. Run
+only the opt-in upstream encoder trace. Cine inspection/profiling experiments
+have been removed. Run
 `python3 tools/run_fork_checks.py --sdk` after dependency installation, and check
 `tools/check_cine_build.py --elf PATH` (add `--diagnostics` for that target).
 Do not add experimental photographic modes to the production session.

@@ -23,7 +23,6 @@ checks = [
     "test_cine_jpeg_preview",
     "test_cine_subtle_overlay_view",
     "test_cine_interactions",
-    "test_input_cadence",
     "test_diagnostic_capabilities",
     "test_cine_flow",
     "test_navigation_presentation",

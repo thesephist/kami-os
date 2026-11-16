@@ -1,5 +1,4 @@
 #pragma once
-#include "config/diagnostics.h"
 #include "services/camera_session.h"
 #include "core/cine_isp.h"
 class JPEGDEC;
@@ -11,15 +10,6 @@ struct Status {
   uint32_t sequence = 0;
   char message[80] = {}, photoPath[64] = {}, metadataPath[64] = {};
 };
-#if ORIGAMI_CINE_PROFILING
-struct Profile {
-  uint32_t startupUs = 0, startupPrepareUs = 0, startupInitUs = 0, startupAeUs = 0,
-           startupIspUs = 0, startupPreviewUs = 0;
-  bool startupAeStable = false;
-  uint32_t frames = 0, previewUs = 0, previewReadUs = 0, previewAgeUs = 0, previewDrawAgeUs = 0,
-           previewIntervalUs = 0, frameUs = 0, saveUs = 0, totalUs = 0;
-};
-#endif
 // UI-owned, single 3MP ISP/JPEG pipeline. All frame loans end before input dispatch.
 class Session {
 public:
@@ -43,10 +33,6 @@ public:
   const Status &status() const { return status_; }
   const uint16_t *pixels() const { return preview_; }
   static constexpr unsigned previewWidth = 224, previewHeight = 168;
-#if ORIGAMI_CINE_PROFILING
-  const Profile &profile() const { return profile_; }
-  void previewDrawn();
-#endif
 private:
   enum class ExposureMode { Automatic, Manual };
   camera::Session camera_;
@@ -60,10 +46,6 @@ private:
   bool configured_ = false;
   Status status_;
   hal::camera::CineIspReadback ispReadback_;
-#if ORIGAMI_CINE_PROFILING
-  Profile profile_;
-  uint64_t cachedFrameUs_ = 0, lastPreviewDoneUs_ = 0;
-#endif
   bool configureExposure(ExposureMode mode, uint32_t shutterUs, unsigned gainQ4);
   void releaseIspPreview();
   bool renderIspPreview(const hal::camera::CameraFrame &frame, bool (*shouldAbort)(void *),

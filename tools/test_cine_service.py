@@ -114,9 +114,6 @@ int main(){using services::cine_camera::Session;using services::cine_camera::Col
  assert(!c.capture());clockUs+=1000000;assert(c.preview());stale=true;n=reads;assert(!c.capture()&&!held&&reads==n+4);stale=false;
  assert(c.capture()&&!held&&c.status().saved&&files[c.status().photoPath]==jpeg&&!embeddedExif.empty());std::string meta(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"embedded_exif\":true")!=std::string::npos);assert(meta.find("\"jpeg_quantization_scale\":8")!=std::string::npos);assert(meta.find("\"color_name\":")!=std::string::npos&&meta.find("\"wb_preset\":1")!=std::string::npos);assert(meta.find("\"automatic\":true")!=std::string::npos&&meta.find("\"sample_valid\":true")!=std::string::npos&&meta.find("\"output_width\":2048")!=std::string::npos);
  stale=true;assert(!c.capture());stale=false;
-#if ORIGAMI_CINE_PROFILING
- assert(c.profile().saveUs==0&&c.profile().totalUs==0);
-#endif
  failTelemetry=true;assert(c.capture()&&c.autoExposure());meta=std::string(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"sample_valid\":false")!=std::string::npos);failTelemetry=false;
  std::string overlongVersion(90,'x');firmware=overlongVersion.c_str();assert(c.capture()&&embeddedExif.empty()&&strstr(c.status().message,"metadata failed"));meta=std::string(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"embedded_exif\":false")!=std::string::npos);firmware="v1.0.5";
  failMeta=true;assert(c.capture()&&strstr(c.status().message,"metadata failed"));failMeta=false;
@@ -126,26 +123,24 @@ int main(){using services::cine_camera::Session;using services::cine_camera::Col
 }
 """,
     )
-    for profiling in [0, 1]:
-        subprocess.run(
-            [
-                "c++",
-                "-std=c++11",
-                "-O1",
-                "-fsanitize=address,undefined",
-                "-DORIGAMI_CINE_PROFILING=" + str(profiling),
-                "-I" + str(p),
-                "-I" + str(R / "include"),
-                str(p / "test.cpp"),
-                str(R / "src/services/cine_camera.cpp"),
-                str(R / "src/services/cine_camera_isp.cpp"),
-                str(R / "src/core/cine_exif.cpp"),
-                "-o",
-                str(p / "test"),
-            ],
-            check=True,
-        )
-        subprocess.run([str(p / "test")], check=True)
+    subprocess.run(
+        [
+            "c++",
+            "-std=c++11",
+            "-O1",
+            "-fsanitize=address,undefined",
+            "-I" + str(p),
+            "-I" + str(R / "include"),
+            str(p / "test.cpp"),
+            str(R / "src/services/cine_camera.cpp"),
+            str(R / "src/services/cine_camera_isp.cpp"),
+            str(R / "src/core/cine_exif.cpp"),
+            "-o",
+            str(p / "test"),
+        ],
+        check=True,
+    )
+    subprocess.run([str(p / "test")], check=True)
 print(
-    "PASS canonical service with profiling off/on: startup/failures, loan cancellation, WB/manual/Auto, freshness, original JPEG save, metadata failures, blocked teardown and cleanup; ASan/UBSan"
+    "PASS canonical production service: startup/failures, loan cancellation, WB/manual/Auto, freshness, original JPEG save, metadata failures, blocked teardown and cleanup; ASan/UBSan"
 )

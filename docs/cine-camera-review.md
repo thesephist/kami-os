@@ -21,13 +21,13 @@ Scope: OV3660 scratch hardware, upstream `cf3d1ce8ecfd7d4e4c63c52c9e25358dcdc526
 | Viewfinder UI | Shared brackets, capture effects, photographer overlay. A returns; B photo/hold for video; C settings. Wheel does not change live exposure. | Stock framing/effects, with a complete native20px eight-tooth gear at A. B photo; C toggles Color/shutter wheel with the standard Select haptic. Large values and small SS/Color labels appear only after adjustment/mode changes (2s hold, immediate show/hide; no fade); active row uses theme kUiEdit blue, no arrow. Compact rounded50%-opaque backing on wheel rows and photo/save caption; clear image after hiding. No bottom metrics row. Sunny/Color default; Color above SS, inverted shutter direction, A+B exit; no video. |
 | Settings | Persistent camera profiles, manual controls, capture resolution and supported video/focus options. | Standard ListView rows for shutter, Color and Back to camera; C toggles editing, wheel adjusts, A exits editing/backs out. All rows use the normal menu font. Session-local Color/shutter/wheel mode; settings preserve them; reopen defaults to Cine, Color wheel and Sunny WB with fresh exposure settling. No writes to Stock preferences or sensor OTP. |
 | Saved files | Shared `/photos/IMG_XXXXX.jpg` numbering; photo review and cloud-upload integration. | Same photo allocator/path; best-effort `/cine/SHOT_XXXXX.json` sidecar with Color mode, fixed Sunny WB and exposure metadata. Capture feedback returns to preview; no cloud enqueue. JSON failure does not undo an already saved JPEG. |
-| Availability/tools | Main Camera entry and its existing diagnostics. | Home B → Cine camera; an explicit diagnostic build adds canonical-pipeline inspection and optional timings. USB maintenance/photo downloads remain available in production. |
+| Availability/tools | Main Camera entry and its existing diagnostics. | Home B → Cine camera; camera-specific inspection and timing experiments have been removed. USB maintenance/photo downloads remain available in production. |
 
 **One canonical pipeline:** native 3MP sensor ISP JPEG throughout preview and capture. The separate built-in Camera app remains available; Cine contains no Stock, RAW, alternate tone/matrix or re-encoding paths.
 
-**Startup:** an immediate stock-style app-opening splash precedes camera initialization. Cine observes AE over separate frames (at least 450 ms and three transitions within 3% exposure×gain), with the previous 1.1 s settling budget as fallback. After ISP writes, transitional frames are discarded until a preview with a DMA timestamp beyond the two-frame freshness guard is decoded. The controls screen no longer closes/reopens the driver. Device-side phase timings are available through `cine startup`.
+**Startup:** an immediate stock-style app-opening splash precedes camera initialization. Cine observes AE over separate frames (at least 450 ms and three transitions within 3% exposure×gain), with the previous 1.1 s settling budget as fallback. After ISP writes, transitional frames are discarded until a preview with a DMA timestamp beyond the two-frame freshness guard is decoded. The controls screen no longer closes/reopens the driver.
 
-**Tone comparison:** `cine bench isp vendor vendor 0 SHUTTER_US GAIN_Q4` restores the 16 gamma bytes read from the sensor immediately after normal initialization. `srgb` writes the current approximation. Both paths otherwise use identical Cine settings. This isolates gamma, not every difference from the complete Stock app. Vendor gamma is unavailable if the initial read fails; nonzero gamma EV is rejected for the exact vendor copy. Neither path can recover sensor-clipped highlights.
+**Historical tone comparison:** an earlier diagnostic compared the vendor gamma bytes read after initialization with our sRGB approximation, holding the remaining Cine settings equal. That experiment command has been removed. Neither curve can recover sensor-clipped highlights.
 
 ## Memory/crash review
 
@@ -43,20 +43,20 @@ Reviewed app events, sensor/frame ownership, preview callbacks, capture buffers,
 
 ## Review map
 
-- `src/apps/cine_camera_app.cpp`, `include/ui/cine_camera_view.h`: controls, rendering and serial diagnostics.
+- `src/apps/cine_camera_app.cpp`, `include/ui/cine_camera_view.h`: controls and rendering.
 - `src/services/cine_camera*.cpp`: lifecycle, borrowed-frame ownership, direct JPEG capture, ISP configuration and preview.
 - `include/core/cine_frame.h`: sensor JPEG validation. `include/core/cine_shutter.h`: bounded shutter math.
 - `src/hal/hal_camera.cpp`: sensor register transaction/readback/rollback and physical exposure controls.
 - `include/core/cine_isp.h`: exact selected sRGB gamma bytes, vendor +1 matrix, darker AE target and typed static WB presets.
-- `include/config/diagnostics.h`: independent production/inspection/profiling capabilities; official releases reject instrumentation.
+- `include/config/diagnostics.h`: opt-in upstream encoder tracing; official releases reject instrumentation.
 
 ## Fork maintenance pass — November 9, 2026
 
-The managed source is `thesephist/kami-os`. Development snapshots remain in the private archive; use `git diff -w upstream/main...main` to review the current public fork with whitespace ignored.
+The managed source is `thesephist/kami-os`. Development snapshots remain in Git history; use `git diff -w upstream/main...main` to review the current public fork with whitespace ignored.
 
 - Removed the unreachable paired/neutral comparison capture branches, unused WB override, look/color cycling methods without callers, unused preview accessors/state, a duplicate wheel-value formatter, and an ignored UI argument. Reachable photo paths, JSON field names/values, UI, and USB commands retain their behavior.
 - Replaced positional ISP numeric/boolean options with `IspConfig`, `GammaCurve`, and `ColorMatrix`. The matrix type makes the old fitted-matrix/vendor-saturation conflict unrepresentable. Named internal modes distinguish native ISP JPEG, stock diagnostics, and binned/native RAW.
-- Kept the RAW/ISP/resize benchmark tools because they remain reachable USB experiments. Filmic and fitted-matrix diagnostics remain explicitly separate from the selected sRGB/vendor+1 baseline. Removing those tools would change the experiment interface.
+- At that stage, RAW/ISP/resize benchmarks and Filmic/fitted-matrix diagnostics were retained as USB experiments. The November 12 cleanup below subsequently removed them.
 - Formatted only fork-added C++ files, excluding the copied JPEG codec. Upstream source outside our additions was not reformatted. Portable sanitizer fixtures and a focused CI runner now live in `tools/`; they need no retained personal photos or scratch paths.
 
 The selected image pipeline remains **C+0 S+1 · B0**, Sunny by default, native 2048×1536 JPEG, with the same shutter/Color controls and transient blue overlay.
@@ -78,29 +78,29 @@ obsolete tests. The existing JPEG DMA compatibility safeguards remain.
 `Session::open()` has one configuration: 2048×1536 sensor JPEG (now QS8 after the
 [compression study](cine-jpeg-compression-study.md)),
 selected Color ISP tables (Sunny defaults to sRGB/vendor +1), fixed Sunny WB and continuous hardware Auto
-exposure by default. `WhiteBalance` admits four static presets; manual/Auto
+exposure by default. `ColorMode` admits six fixed-Sunny profiles; manual/Auto
 exposure is separate from image treatment. Settings, freshness checks,
 register verification/rollback, atomic preview swaps and teardown ownership
 are preserved. Gamma constants match the previous formula exactly.
 
 The smaller `Status` reports operation results and photo/metadata paths.
-Optional `Profile` storage and preview timers exist only when profiling is
-compiled in. Sidecar schema v2 records the fixed profile, WB and live/locked
-exposure sample; obsolete RAW/look fields and preview-performance telemetry
-are removed. JPEG bytes are still saved directly and metadata remains best effort.
+Sidecar schema v3 records Color, live/locked exposure and EXIF status; JPEG bytes
+are saved directly and metadata remains best effort.
 
-Build the ordinary firmware with `./build.sh`; use `./build.sh --diagnostics`
-for inspection of the same pipeline. `ORIGAMI_CINE_DIAGNOSTICS`,
-`ORIGAMI_CINE_PROFILING`, `ORIGAMI_INPUT_TRACE` and
-`ORIGAMI_INPUT_PROFILING` default to 0. The diagnostic target enables all four.
-Official OTA builds reject them. Existing USB maintenance/file transfer and
-platform log policy remain separate from these Cine/input capabilities.
+## Observability cleanup — November 15, 2026
 
-Production excludes Cine USB inspection, preview profiling, input-cadence
-collection, encoder ISR trace hooks and its internal-RAM staging/archive state.
-`tools/check_cine_build.py` checks actual linked symbols in either image.
-Diagnostics expose only open/status/controls/WB/shutter/startup/latency/capture
-measurements; none select a different photographic pipeline.
+Removed Cine serial inspection commands, startup/preview/capture timers and
+`Profile` storage, plus the physical-button cadence collector and its test.
+These tools served completed experiments; historical results remain documented.
+There is one camera pipeline with no profiling variant. Capture, input polling,
+freshness checks, EXIF and per-photo JSON metadata are unchanged.
+
+`./build.sh` builds production. `./build.sh --diagnostics` now enables only the
+upstream encoder trace via `ORIGAMI_INPUT_TRACE`, which defaults to 0 and is
+rejected by official OTA builds. Existing USB maintenance/file transfer and
+upstream camera diagnostics remain available under their existing access rules.
+`tools/check_cine_build.py` checks that removed apps and instrumentation stay
+absent from the linked firmware.
 
 ## Embedded EXIF for new Cine photos
 

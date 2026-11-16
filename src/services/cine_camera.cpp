@@ -14,13 +14,7 @@
 #include <stdio.h>
 namespace services {
 namespace cine_camera {
-#if ORIGAMI_CINE_PROFILING
-#define CINE_PROFILE(...) __VA_ARGS__
-#else
-#define CINE_PROFILE(...)
-#endif
 bool Session::open() {
-  CINE_PROFILE(const uint64_t startupAt = esp_timer_get_time();)
   if (!close(false))
     return false;
   autoFrameVts_ = 0;
@@ -30,7 +24,6 @@ bool Session::open() {
   shutter_ = {};
   shutterReadyUs_ = 0;
   colorMode_ = ColorMode::Sunny;
-  CINE_PROFILE(profile_ = {};)
   if (!photos::initialize() || !hal::sd::ensureDir("/cine")) {
     snprintf(status_.message, sizeof(status_.message), "SD unavailable");
     close();
@@ -46,15 +39,12 @@ bool Session::open() {
   tuning.ae_level = core::cine::aeLevel;
   tuning.allowNightMode = false;
   tuning.lenc = false;
-  CINE_PROFILE(profile_.startupPrepareUs = uint32_t(esp_timer_get_time() - startupAt);)
-  CINE_PROFILE(const uint64_t initAt = esp_timer_get_time();)
   if (!camera_.start(FRAMESIZE_QXGA, PIXFORMAT_JPEG, &tuning, core::cine::jpegQuantizationScale)) {
     snprintf(status_.message, sizeof(status_.message), "Camera init failed: %s",
              camera_.lastError());
     close();
     return false;
   }
-  CINE_PROFILE(profile_.startupInitUs = uint32_t(esp_timer_get_time() - initAt);)
   preview_ = static_cast<uint16_t *>(
       heap_caps_malloc(previewWidth * previewHeight * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!preview_) {
@@ -79,21 +69,15 @@ bool Session::open() {
       const uint64_t difference = before > now ? before - now : now - before;
       stable = before && difference * 100 <= before * 3 ? stable + 1 : 0;
       previous = value;
-      if (stable >= 3 && esp_timer_get_time() - aeAt >= 450000) {
-        CINE_PROFILE(profile_.startupAeStable = true;)
+      if (stable >= 3 && esp_timer_get_time() - aeAt >= 450000)
         break;
-      }
     } else
       stable = 0;
   }
 
-  CINE_PROFILE(profile_.startupAeUs = uint32_t(esp_timer_get_time() - aeAt);)
-  CINE_PROFILE(const uint64_t ispAt = esp_timer_get_time();)
   status_.open = true;
   if (!configureExposure(ExposureMode::Automatic, 16667, 16))
     return false;
-  CINE_PROFILE(profile_.startupIspUs = uint32_t(esp_timer_get_time() - ispAt);)
-  CINE_PROFILE(const uint64_t previewAt = esp_timer_get_time();)
   // Keep the two-frame freshness guard after ISP writes. Drain transitional
   // frames until an actual fresh preview is decoded, with a bounded deadline.
   bool first = false;
@@ -108,8 +92,6 @@ bool Session::open() {
     return false;
   }
 
-  CINE_PROFILE(profile_.startupPreviewUs = uint32_t(esp_timer_get_time() - previewAt);
-               profile_.startupUs = uint32_t(esp_timer_get_time() - startupAt);)
   return true;
 }
 bool Session::close(bool restoreUi) {
@@ -124,7 +106,6 @@ bool Session::close(bool restoreUi) {
   releaseIspPreview();
   heap_caps_free(preview_);
   preview_ = nullptr;
-  CINE_PROFILE(cachedFrameUs_ = lastPreviewDoneUs_ = 0;)
   if (restoreUi)
     camera_.restoreUi(camera::Session::Resume::DeferredWithInputRecovery);
   return true;
@@ -138,10 +119,8 @@ bool Session::preview(bool (*shouldAbort)(void *), void *context) {
     return false;
   }
   hal::camera::CameraFrame frame{};
-  CINE_PROFILE(const uint64_t readAt = esp_timer_get_time();)
   if (!camera_.read(&frame))
     return false;
-  CINE_PROFILE(profile_.previewReadUs = uint32_t(esp_timer_get_time() - readAt);)
   if (shouldAbort && shouldAbort(context)) {
     camera_.returnFrame();
     status_.previewInterrupted = true;
@@ -153,30 +132,13 @@ bool Session::preview(bool (*shouldAbort)(void *), void *context) {
   }
   bool ok = frame.format == PIXFORMAT_JPEG &&
             core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height, 2048, 1536);
-  if (ok) {
-    CINE_PROFILE(const uint64_t at = esp_timer_get_time();)
+  if (ok)
     ok = renderIspPreview(frame, shouldAbort, context);
-    CINE_PROFILE(profile_.previewUs = uint32_t(esp_timer_get_time() - at);
-                 if (ok) cachedFrameUs_ = frame.dmaStartUs;)
-  }
   camera_.returnFrame();
-  if (ok) {
-    CINE_PROFILE(
-        ++profile_.frames; const uint64_t done = esp_timer_get_time();
-        profile_.previewAgeUs = done >= cachedFrameUs_ ? uint32_t(done - cachedFrameUs_) : 0;
-        profile_.previewIntervalUs = lastPreviewDoneUs_ ? uint32_t(done - lastPreviewDoneUs_) : 0;
-        lastPreviewDoneUs_ = done;)
-  } else if (!status_.previewInterrupted)
+  if (!ok && !status_.previewInterrupted)
     snprintf(status_.message, sizeof(status_.message), "Unexpected sensor frame format");
   return ok;
 }
-#if ORIGAMI_CINE_PROFILING
-void Session::previewDrawn() {
-  const uint64_t now = esp_timer_get_time();
-  if (cachedFrameUs_ && now >= cachedFrameUs_)
-    profile_.previewDrawAgeUs = uint32_t(now - cachedFrameUs_);
-}
-#endif
 void Session::adjustShutter(int delta) {
   if (!status_.open || !shutter_.valid || !delta)
     return;
@@ -210,7 +172,6 @@ bool Session::capture() {
     return false;
   }
   status_.saved = false;
-  CINE_PROFILE(profile_.frameUs = profile_.saveUs = profile_.totalUs = 0;)
   status_.photoPath[0] = status_.metadataPath[0] = 0;
   auto target = photos::prepare();
   if (!target.valid()) {
@@ -230,14 +191,12 @@ bool Session::capture() {
     }
     camera_.returnFrame();
   }
-  CINE_PROFILE(profile_.frameUs = uint32_t(esp_timer_get_time() - started);)
   if (!acquired) {
     snprintf(status_.message, sizeof(status_.message), "Fresh sensor frame unavailable");
     return false;
   }
   const bool sampleValid = autoExposure() ? refreshExposure() : shutter_.valid;
   const auto exposure = sampleValid ? shutter_ : hal::camera::ShutterInfo{};
-  CINE_PROFILE(const uint64_t saveAt = esp_timer_get_time();)
   uint8_t exif[core::cine::exifCapacity];
   const core::cine::ExifInfo exifInfo{core::device::firmwareVersion(), colorName(colorMode_),
       exposure.valid ? exposure.actualUs : 0, uint16_t(frame.width), uint16_t(frame.height), autoExposure()};
@@ -247,8 +206,6 @@ bool Session::capture() {
       core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height, 2048, 1536) &&
       photos::write(target, frame.buf, frame.len, exif, exifBytes);
   camera_.returnFrame();
-  CINE_PROFILE(profile_.saveUs = uint32_t(esp_timer_get_time() - saveAt);
-               profile_.totalUs = uint32_t(esp_timer_get_time() - started);)
   status_.saved = ok;
   snprintf(status_.photoPath, sizeof(status_.photoPath), "%s", target.path);
   snprintf(status_.metadataPath, sizeof(status_.metadataPath), "/cine/SHOT_%05lu.json",
@@ -284,6 +241,5 @@ bool Session::capture() {
               : "Save failed; partial files retained");
   return ok;
 }
-#undef CINE_PROFILE
 } // namespace cine_camera
 } // namespace services

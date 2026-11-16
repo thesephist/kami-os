@@ -1,4 +1,4 @@
-"""Check that a built image includes only the requested Cine observability."""
+"""Check canonical Cine, removed experiments, and opt-in upstream encoder tracing."""
 
 from pathlib import Path
 import argparse, os, subprocess
@@ -18,6 +18,9 @@ legacy = [
     "apps::hello_world::",
     "apps::photo_printer::",
     "services::photo_print::",
+    "apps::cine_camera::handleSerialCommand",
+    "Session::previewDrawn",
+    "hal::input::startButtonCadence",
     "ToneMap::",
     "meterBayer",
     "benchmarkIspResize",
@@ -33,10 +36,7 @@ legacy = [
 for name in legacy:
     assert name not in symbols, "Legacy implementation remains linked: " + name
 for name in [
-    "apps::cine_camera::handleSerialCommand",
-    "Session::previewDrawn",
     "hal::input::encoderTraceStart",
-    "hal::input::startButtonCadence",
 ]:
     assert (name in symbols) == a.diagnostics, (
         "Capability mismatch",
@@ -54,7 +54,7 @@ assert "hal::camera::getFrame" in symbols
 print(
     "PASS removed example/print apps absent; canonical Cine linked once; "
     + (
-        "diagnostic commands/profile/trace present"
+        "optional upstream encoder trace present"
         if a.diagnostics
         else "Cine inspection/profiling and input trace/cadence absent"
     )
