@@ -1,4 +1,7 @@
+#include <time.h>
 #include "upload_queue.h"
+#include "services/media_upload_progress.h"
+#include "services/gallery_receipt.h"
 
 #include <ArduinoJson.h>
 #include <SD.h>
@@ -11,6 +14,7 @@
 #include <new>
 
 #include "core/secrets.h"
+#include "core/board_time.h"
 #include "core/upload_receipt.h"
 #include "core/watchdog.h"
 #include "hal/hal_bus.h"
@@ -185,6 +189,7 @@ bool UploadQueue::loadManifestFileUnlocked(const char* path) {
         strlcpy(it.mimeType, obj["mime"] | "",   sizeof(it.mimeType));
         strlcpy(it.fileName, obj["name"] | "",   sizeof(it.fileName));
         it.createdAt     = obj["created"] | (uint32_t)0;
+        it.capturedAtUnix = obj["capturedAtUnix"] | (uint32_t)0;
         it.attempts      = obj["attempts"] | (uint8_t)0;
         // millis()-based state cannot survive reboot. Every boot starts a new
         // turn, but the lifetime attempt count and queue order remain durable.
@@ -199,14 +204,6 @@ bool UploadQueue::loadManifestFileUnlocked(const char* path) {
         // the worker dying mid-upload). They'll be re-attempted on next tick.
         if (it.status == QSTATUS_UPLOADING) {
             it.status = QSTATUS_PENDING;
-        }
-
-        // Drop FAILED items left over from earlier firmware versions — the new code path
-        // never persists FAILED (it deletes immediately on permanent failure / max retries),
-        // so anything in this state is stale. Keeping them around just wastes queue slots.
-        if (it.status == QSTATUS_FAILED) {
-            Serial.printf("[queue] Boot purge: dropping stale FAILED %s (err=%s)\n", it.id, it.lastError);
-            continue;
         }
 
         // Verify file still exists on SD
@@ -240,6 +237,7 @@ bool UploadQueue::saveManifestUnlocked() {
         obj["mime"]        = it.mimeType;
         obj["name"]        = it.fileName;
         obj["created"]     = it.createdAt;
+        obj["capturedAtUnix"] = it.capturedAtUnix;
         obj["attempts"]    = it.attempts;
         obj["status"]      = (int)it.status;
         obj["deleteAfterUpload"] = it.deleteAfterUpload;
@@ -304,8 +302,8 @@ uint32_t UploadQueue::generatePath(const char* prefix, const char* ext,
 // ---------------------------------------------------------------------------
 
 bool UploadQueue::enqueue(const char* type, const char* filePath,
-                          const char* mimeType, bool deleteAfterUpload) {
-    if(!type||!filePath||!mimeType)return false;
+                          const char* mimeType, bool deleteAfterUpload, uint32_t capturedAtUnix) {
+    if (!type || !filePath || !mimeType || !m_initialized) return false;
     if(!strcmp(type,"video")){
         if(deleteAfterUpload||strcmp(mimeType,"video/x-msvideo"))return false;
         const auto result=enqueueVideo(filePath);
@@ -313,20 +311,12 @@ bool UploadQueue::enqueue(const char* type, const char* filePath,
     }
     {
         MutexGuard g(m_mutex);
-        if(mutationBlocksUnlocked(filePath))return false;
+        if (!g.taken || !m_items || mutationBlocksUnlocked(filePath)) return false;
         const char* name=strrchr(filePath,'/');name=name?name+1:filePath;
         if(!name[0]||strnlen(name,sizeof(QueueItem::id))>=sizeof(QueueItem::id))return false;
         if(!strcasecmp(name,m_inFlightId))return false;
         for(int i=0;i<m_count;++i)if(!strcasecmp(m_items[i].id,name))return false;
-        if (m_count >= UPLOAD_QUEUE_MAX_ITEMS) {
-            // Don't drop the new item — evict the oldest expendable one so the user's latest
-            // photo / recording is the one that survives. (Old behaviour returned false here, which
-            // left the photo on SD with no upload path and the queue stuck full forever.)
-            if (!makeRoomForOneUnlocked()) {
-                Serial.println("[queue] Queue full and nothing evictable!");
-                return false;
-            }
-        }
+        if (m_count >= UPLOAD_QUEUE_MAX_ITEMS) return false;
 
         // Verify file exists (cheap I/O outside the worker's network path).
         if (!SD.exists(filePath)) {
@@ -346,6 +336,7 @@ bool UploadQueue::enqueue(const char* type, const char* filePath,
         strlcpy(it.mimeType, mimeType, sizeof(it.mimeType));
         strlcpy(it.fileName, fname,    sizeof(it.fileName));
         it.createdAt     = millis();
+        it.capturedAtUnix = capturedAtUnix;
         it.attempts      = 0;
         it.lastAttemptAt = 0;
         it.nextEligibleAt = 0;
@@ -355,7 +346,10 @@ bool UploadQueue::enqueue(const char* type, const char* filePath,
         it.lastError[0]  = '\0';
 
         m_count++;
-        saveManifestUnlocked();
+        if (!saveManifestUnlocked()) {
+            --m_count;
+            return false;
+        }
 
         Serial.printf("[queue] Enqueued %s (%s) [%d in queue]\n",
                       it.id, type, m_count);
@@ -380,6 +374,11 @@ void UploadQueue::tick() {
         return;
     }
     if (m_uploadPaused || WiFi.status() != WL_CONNECTED || !hasRunnableItem()) return;
+    // Boot deliberately clears wall time. Starting TLS before SNTP succeeds
+    // spends retry turns on certificate-date failures and can delay valid media
+    // for a full cooldown. Local plain-HTTP fixtures do not require a clock.
+    if (!core::time::isSynced() &&
+        strncmp(core::secrets::backendConfig().url, "https://", 8) == 0) return;
     startWorker();
 }
 
@@ -482,7 +481,7 @@ bool UploadQueue::processOnePending() {
 
     // 2) Long blocking network I/O — NO mutex held. startWorker() acquired
     // exclusive use of the device's constrained TLS resources before spawn.
-    const UploadResult result = doUpload(snapshot);
+    const UploadResult result = uploadWithGalleryReceipt(snapshot);
 
     // 3) Apply result back to the live item under the mutex.
     {
@@ -521,6 +520,8 @@ bool UploadQueue::processOnePending() {
             return true;
         }
         strlcpy(live->lastError, snapshot.lastError, sizeof(live->lastError));
+        if(!strcmp(m_deliveryPath,live->filePath) && result.kind!=UploadResultKind::Aborted)
+            strlcpy(m_deliveryError,snapshot.lastError,sizeof(m_deliveryError));
 
         if (result.kind == UploadResultKind::Aborted) {
             live->status = QSTATUS_PENDING;
@@ -560,9 +561,9 @@ bool UploadQueue::processOnePending() {
         if (result.kind == UploadResultKind::PermanentItemFailure) {
             Serial.printf("[queue] %s terminal preflight failure; preserving %s (%s)\n",
                           live->id, live->filePath, live->lastError);
-            snprintf(m_lastStatus, sizeof(m_lastStatus), "%s removed: %s",
+            snprintf(m_lastStatus, sizeof(m_lastStatus), "%s failed: %s",
                      live->id, live->lastError);
-            removeItemAtUnlocked(liveIdx);
+            live->status = QSTATUS_FAILED;
             saveManifestUnlocked();
             return true;
         }
@@ -576,6 +577,8 @@ bool UploadQueue::processOnePending() {
             result.httpCode >= 200 && result.httpCode < 300) {
             Serial.printf("[queue] %s uploaded OK (%d)\n", live->id, result.httpCode);
             snprintf(m_lastStatus, sizeof(m_lastStatus), "%s uploaded OK", live->id);
+            ++m_confirmedCount;
+            if (!strcmp(m_deliveryPath,live->filePath)) m_deliveryConfirmed=true;
             deleteFileIfOwnedUnlocked(*live);
             removeItemAtUnlocked(liveIdx);
             saveManifestUnlocked();
@@ -585,8 +588,8 @@ bool UploadQueue::processOnePending() {
         if (upload_queue_policy::lifetimeExhausted(live->attempts)) {
             Serial.printf("[queue] %s exhausted %u lifetime attempts; preserving %s\n",
                           live->id, (unsigned)live->attempts, live->filePath);
-            snprintf(m_lastStatus, sizeof(m_lastStatus), "%s removed: max attempts", live->id);
-            removeItemAtUnlocked(liveIdx);
+            snprintf(m_lastStatus, sizeof(m_lastStatus), "%s failed: max attempts", live->id);
+            live->status = QSTATUS_FAILED;
             saveManifestUnlocked();
             return true;
         }
@@ -613,9 +616,9 @@ bool UploadQueue::processOnePending() {
         if (result.kind == UploadResultKind::HttpResponse && !isRetryable(result.httpCode)) {
             Serial.printf("[queue] %s permanent HTTP %d; preserving %s\n",
                           live->id, result.httpCode, live->filePath);
-            snprintf(m_lastStatus, sizeof(m_lastStatus), "%s removed: HTTP %d",
+            snprintf(m_lastStatus, sizeof(m_lastStatus), "%s failed: HTTP %d",
                      live->id, result.httpCode);
-            removeItemAtUnlocked(liveIdx);
+            live->status = QSTATUS_FAILED;
             saveManifestUnlocked();
             return true;
         }
@@ -656,7 +659,24 @@ bool UploadQueue::processOnePending() {
 // change takes effect on the next upload, not halfway through request setup.
 // ---------------------------------------------------------------------------
 
+UploadQueue::UploadResult UploadQueue::uploadWithGalleryReceipt(QueueItem& item) {
+    if(item.deleteAfterUpload || (strcmp(item.type,"image") && strcmp(item.type,"video")))
+        return doUpload(item);
+    const auto revision=core::secrets::backendRequest().revision;
+    char binding[65];
+    size_t bytes=0;
+    uint32_t modified=0;
+    const bool identified=services::video_upload::binding(core::secrets::backendConfig(),binding)
+        && hal::sd::fileInfo(item.filePath,bytes,modified);
+    const auto result=doUpload(item);
+    if(identified && result.kind==UploadResultKind::HttpResponse && result.httpCode>=200 &&
+       result.httpCode<300 && revision==core::secrets::backendRequest().revision)
+        services::gallery_receipt::remember(item.filePath,binding,bytes,modified);
+    return result;
+}
+
 UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
+    services::media_upload::current().set(0,0);
     if(strcmp(item.type,"video")==0)return doVideoUpload(item);
     const auto config = core::secrets::backendConfig();
     const char* liveUrl = config.url;
@@ -681,6 +701,7 @@ UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
         return {UploadResultKind::PermanentItemFailure, 0, false, 0};
     }
     size_t fileSize = file.size();
+    services::media_upload::current().set(0,fileSize);
 
     const char* boundary = "----OrigamiBoundary7MA4YWxk";
 
@@ -696,6 +717,20 @@ UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
         "Content-Disposition: form-data; name=\"media\"; filename=\"%s\"\r\n"
         "Content-Type: %s\r\n\r\n",
         boundary, item.fileName, item.mimeType);
+
+    // Capture time is immutable queue metadata, independent of upload/retry time.
+    char capturePart[160] = {};
+    if (!strcmp(item.type, "image") && item.capturedAtUnix) {
+        const time_t captured = static_cast<time_t>(item.capturedAtUnix);
+        struct tm utc{};
+        char iso[24] = {};
+        if (gmtime_r(&captured, &utc) &&
+            strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", &utc)) {
+            snprintf(capturePart, sizeof(capturePart),
+                "--%s\r\nContent-Disposition: form-data; name=\"capturedAt\"\r\n\r\n%s\r\n",
+                boundary, iso);
+        }
+    }
 
     // Postamble: platform + sessionId + optional upload intent fields.
     char postamble[384];
@@ -721,8 +756,9 @@ UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
             "--%s\r\n"
             "Content-Disposition: form-data; name=\"sessionId\"\r\n\r\n"
             "origami-device\r\n"
+            "%s"
             "--%s--\r\n",
-            boundary, boundary, boundary);
+            boundary, boundary, capturePart, boundary);
     }
 
     size_t contentLength = (size_t)preambleLen + fileSize + (size_t)postambleLen;
@@ -843,7 +879,10 @@ UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
         hal::bus::unlockSpi();
         if (bytesRead == 0 || bytesRead > toRead) { writeOk = false; break; }
         writeOk = writeAll(buf, bytesRead); // Network I/O holds no SPI lock.
-        remaining -= bytesRead;
+        if(writeOk){
+            remaining -= bytesRead;
+            services::media_upload::current().set(fileSize-remaining,fileSize);
+        }
         // Each write can consume its socket timeout. Eight successful but slow
         // chunks must not accumulate past the watchdog between progress feeds.
         core::watchdog::feed();
@@ -991,44 +1030,6 @@ void UploadQueue::deleteFileIfOwnedUnlocked(const QueueItem& item) {
     if (strcmp(item.type,"video") && item.deleteAfterUpload && item.filePath[0]) {
         SD.remove(item.filePath);
     }
-}
-
-bool UploadQueue::makeRoomForOneUnlocked() {
-    if (m_count < UPLOAD_QUEUE_MAX_ITEMS) return true;
-
-    // Pass 1: drop a FAILED entry (oldest first).
-    for (int i = 0; i < m_count; i++) {
-        if (m_items[i].status == QSTATUS_FAILED) {
-            Serial.printf("[queue] Evict FAILED %s to make room (err=%s)\n",
-                          m_items[i].id, m_items[i].lastError);
-            removeItemAtUnlocked(i);
-            saveManifestUnlocked();
-            return true;
-        }
-    }
-    // Pass 2: drop a PENDING entry that already burnt through its retry budget.
-    for (int i = 0; i < m_count; i++) {
-        if (m_items[i].status == QSTATUS_PENDING &&
-            upload_queue_policy::lifetimeExhausted(m_items[i].attempts)) {
-            Serial.printf("[queue] Evict exhausted %s (attempts=%u)\n",
-                          m_items[i].id, m_items[i].attempts);
-            removeItemAtUnlocked(i);
-            saveManifestUnlocked();
-            return true;
-        }
-    }
-    // Pass 3: oldest PENDING (FIFO drop). Skip anything actively UPLOADING — the worker is mid
-    // request and pulling the slot would crash on the result-write path.
-    for (int i = 0; i < m_count; i++) {
-        if (m_items[i].status == QSTATUS_PENDING) {
-            Serial.printf("[queue] Evict oldest PENDING %s (FIFO)\n", m_items[i].id);
-            deleteFileIfOwnedUnlocked(m_items[i]);
-            removeItemAtUnlocked(i);
-            saveManifestUnlocked();
-            return true;
-        }
-    }
-    return false;
 }
 
 uint32_t UploadQueue::jitteredDelayMs(uint32_t baseMs) {
@@ -1202,9 +1203,11 @@ UploadQueue::Counts UploadQueue::counts() const {
 UploadQueue::Counts UploadQueue::countsUnlocked() const {
     Counts result;
     if (!m_items) return result;
+    result.confirmed = m_confirmedCount;
     result.total = m_count;
     for (int i = 0; i < m_count; i++) {
         if (m_items[i].status == QSTATUS_PENDING) ++result.pending;
+        if (m_items[i].status == QSTATUS_UPLOADING) ++result.active;
         if (m_items[i].status == QSTATUS_FAILED) ++result.failed;
     }
     return result;
@@ -1495,7 +1498,7 @@ UploadQueue::VideoEnqueue UploadQueue::enqueueVideo(const char* filePath) {
     if(!m_initialized||!m_items)return VideoEnqueue::StorageUnavailable;
     if(!filePath||strncmp(filePath,"/videos/",8)||strnlen(filePath,sizeof(QueueItem::filePath))>=sizeof(QueueItem::filePath))return VideoEnqueue::Invalid;
     const char* name=filePath+8;
-    if(!name[0]||name[0]=='.'||strnlen(name,sizeof(QueueItem::id))>=sizeof(QueueItem::id))return VideoEnqueue::Invalid;
+    if(!name[0]||name[0]=='.'||strnlen(name,kQueueIdCapacity)>=kQueueIdCapacity)return VideoEnqueue::Invalid;
     struct Owned {
         Resume* value=static_cast<Resume*>(heap_caps_malloc(sizeof(Resume),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
         Owned(){if(value)new(value)Resume;}
@@ -1515,12 +1518,21 @@ UploadQueue::VideoEnqueue UploadQueue::enqueueVideo(const char* filePath) {
         if(mutationBlocksUnlocked(filePath))return VideoEnqueue::Busy;
         if(!strcasecmp(name,m_inFlightId))return VideoEnqueue::Busy;
         for(int i=0;i<m_count;++i){
-            const auto& item=m_items[i];
+            auto& item=m_items[i];
             if(strcasecmp(item.id,name))continue;
             if(strcmp(item.type,"video")||strcmp(item.filePath,filePath))return VideoEnqueue::Invalid;
             char expected[65];memcpy(expected,record.backendBinding,sizeof(expected));
             if(load(name,record)!=Load::Ready)return VideoEnqueue::StorageUnavailable;
-            return !strcmp(record.backendBinding,expected)?VideoEnqueue::AlreadyQueued:VideoEnqueue::AccountChanged;
+            if (strcmp(record.backendBinding, expected)) return VideoEnqueue::AccountChanged;
+            if (item.status != QSTATUS_FAILED) return VideoEnqueue::AlreadyQueued;
+            const QueueItem previous = item;
+            clearRetryState(item);
+            if (!saveManifestUnlocked()) {
+                item = previous;
+                return VideoEnqueue::StorageUnavailable;
+            }
+            notifyWorker();
+            return VideoEnqueue::Queued;
         }
         if(m_count>=UPLOAD_QUEUE_MAX_ITEMS)return VideoEnqueue::Full;
         size_t bytes=0;uint32_t modified=0;
@@ -1597,3 +1609,23 @@ UploadQueue::FileMutation::FileMutation(UploadQueue& queue,const char* path,bool
     if(result_==MutationResult::Ready)queue_=&queue;
 }
 UploadQueue::FileMutation::~FileMutation(){if(queue_)queue_->endFileMutation();}
+
+void UploadQueue::watchDelivery(const char* path) {
+    MutexGuard g(m_mutex);
+    strlcpy(m_deliveryPath,path?path:"",sizeof(m_deliveryPath));
+    m_deliveryConfirmed=false;
+    m_deliveryError[0]=0;
+}
+bool UploadQueue::deliveryConfirmed(const char* path) const {
+    MutexGuard g(m_mutex);
+    return path && path[0] && m_deliveryConfirmed && !strcmp(path,m_deliveryPath);
+}
+
+UploadQueue::Delivery UploadQueue::delivery(const char* path) const {
+    MutexGuard g(m_mutex);Delivery result;
+    if(g.taken && path && path[0] && !strcmp(path,m_deliveryPath)){
+        result.confirmed=m_deliveryConfirmed;
+        strlcpy(result.error,m_deliveryError,sizeof(result.error));
+    }
+    return result;
+}

@@ -5,7 +5,7 @@
 namespace services { namespace vibration {
 // UI-task motor and preview owner with independently scheduled haptic output. Last writer wins; this is not an exclusive lease.
 // Raw diagnostic HAL writes bypass this bookkeeping. Release stops only its owner.
-enum class Owner : uint8_t { None, Alarm, Pomodoro, Preview, Tennis, Bowling, Golf, Haptic, Navigation, Dizzy };
+enum class Owner : uint8_t { None, Alarm, Pomodoro, Preview, Tennis, Bowling, Golf, Haptic, Navigation, Dizzy, Widget };
 void drive(Owner owner,uint8_t id,uint32_t elapsedMs);
 void release(Owner owner);
 void stopAll();
@@ -22,6 +22,9 @@ bool pulse(Owner owner,uint32_t durationMs);
 void servicePulse(uint32_t now,bool available);
 // UI-task only. Copies input; one shot, bounded to 10 seconds. Alert/game/preview output
 // takes priority; Studio may replace navigation, dizzy or Studio playback.
+// Named foreground Lua cues. Refuse alert/game/preview ownership; stop only Widget.
+bool widgetCue(const char* name);
+void stopWidgetCue();
 bool playEffect(const core::haptic::Effect& effect);
 void serviceEffect(uint32_t now,bool available);
 void stopEffect();
@@ -33,6 +36,13 @@ bool bindEffect(bool selection,const core::haptic::Effect& effect);
 const core::haptic::Effect& boundEffect(bool selection);
 void setNavigationEnabled(bool enabled);
 bool navigationEnabled();
+// Saved user setting (Settings > Haptics), default on. Off refuses feedback
+// haptics: navigation clicks, the dizzy gesture, game pulses and Lua cues.
+// Alarm and Pomodoro alert vibration and explicit previews ignore it.
+// UI-task only. setHapticsEnabled returns false when the value could not be
+// saved; the previous setting then stays in effect.
+bool hapticsEnabled();
+bool setHapticsEnabled(bool enabled);
 void navigationFeedback(bool selection);
 enum class Cue : uint8_t { None, Scroll, Select, Back, Dizzy };
 const core::haptic::Effect& savedEffect(Cue cue);

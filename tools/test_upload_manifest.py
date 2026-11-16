@@ -7,7 +7,7 @@ short writes, operation failures, corrupt primary recovery and durable counters.
 from pathlib import Path
 import os, subprocess, tempfile
 ROOT=Path(__file__).resolve().parents[1]
-json_src=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'))
+json_src=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'))
 if not (json_src/'ArduinoJson.h').exists():
     raise SystemExit('Install the project ArduinoJson dependency, or set ARDUINOJSON_SRC (7.4.3)')
 source=(ROOT/'src/upload_queue.cpp').read_text();header=(ROOT/'include/upload_queue.h').read_text()
@@ -63,14 +63,14 @@ void resetFaults(){failAt=-1;operations=0;snapshot=false;shortWrite=false;}
 void checkRecovery(const Disk& state){disk=state;resetFaults();UploadQueue boot;assert(boot.loadManifestUnlocked());
  assert(boot.m_count==1);assert(boot.m_nextImgId==164||boot.m_nextImgId==165);assert(boot.m_nextAudId==12);
  assert(boot.m_items[0].status==QSTATUS_PENDING);assert(!strcmp(boot.m_items[0].id,"test-pending.jpg"));
- assert(boot.m_items[0].attempts<=1);assert(boot.m_items[0].attemptsThisTurn==0);assert(boot.m_items[0].nextEligibleAt==0);
+ assert(boot.m_items[0].capturedAtUnix==1793649600);assert(boot.m_items[0].attempts<=1);assert(boot.m_items[0].attemptsThisTurn==0);assert(boot.m_items[0].nextEligibleAt==0);
  // A recovered copy must survive the following save too.
  assert(boot.saveManifestUnlocked());UploadQueue second;assert(second.loadManifestUnlocked());assert(second.m_count==1&&second.m_nextImgId==boot.m_nextImgId);
 }
 int main(){
  UploadQueue q;q.m_count=1;q.m_nextImgId=164;q.m_nextAudId=12;auto& item=q.m_items[0];
  strcpy(item.id,"test-pending.jpg");strcpy(item.filePath,"/upload_queue/test-pending.jpg");strcpy(item.type,"image");strcpy(item.mimeType,"image/jpeg");strcpy(item.fileName,item.id);
- item.status=QSTATUS_UPLOADING;disk[item.filePath]="media";assert(q.saveManifestUnlocked());
+ item.capturedAtUnix=1793649600;item.status=QSTATUS_UPLOADING;disk[item.filePath]="media";assert(q.saveManifestUnlocked());
  // Include a prior backup and stale scratch so their cleanup is fault-tested.
  disk[UPLOAD_QUEUE_MANIFEST ".bak"]=R"({"nextImgId":163,"nextAudId":12,"items":[]})";disk[UPLOAD_QUEUE_MANIFEST ".tmp"]="partial";
  Disk initial=disk;q.m_nextImgId=165;item.attempts=1;snapshot=true;operations=0;assert(q.saveManifestUnlocked());
@@ -79,6 +79,9 @@ int main(){
  disk=initial;resetFaults();shortWrite=true;assert(!q.saveManifestUnlocked());Disk shortState=disk;checkRecovery(shortState);
  disk=initial;disk[UPLOAD_QUEUE_MANIFEST ".bak"]=disk[UPLOAD_QUEUE_MANIFEST];disk[UPLOAD_QUEUE_MANIFEST]="{}";disk.erase(UPLOAD_QUEUE_MANIFEST ".tmp");checkRecovery(disk);
  disk=initial;disk[UPLOAD_QUEUE_MANIFEST ".bak"]=disk[UPLOAD_QUEUE_MANIFEST];disk.erase(UPLOAD_QUEUE_MANIFEST);disk[UPLOAD_QUEUE_MANIFEST ".tmp"]="{partial";checkRecovery(disk);
+ disk.clear();resetFaults();
+ disk[UPLOAD_QUEUE_MANIFEST]=R"({"nextImgId":2,"nextAudId":1,"items":[{"id":"old.jpg","path":"/photos/old.jpg","type":"image","mime":"image/jpeg"}]})";
+ UploadQueue legacy;assert(legacy.loadManifestUnlocked()&&legacy.m_items[0].capturedAtUnix==0);
  disk.clear();resetFaults();UploadQueue fresh;assert(fresh.loadManifestUnlocked()&&fresh.m_count==0);
  disk[UPLOAD_QUEUE_MANIFEST]="{}";UploadQueue corrupt;assert(!corrupt.loadManifestUnlocked());assert(disk[UPLOAD_QUEUE_MANIFEST]=="{}");
  disk=initial;resetFaults();UploadQueue reserve;assert(reserve.loadManifestUnlocked());
@@ -88,6 +91,9 @@ int main(){
  resetFaults();disk.clear();strcpy(item.type,"video");item.deleteAfterUpload=true;disk[item.filePath]="media";
  assert(q.saveManifestUnlocked());UploadQueue videoBoot;assert(videoBoot.loadManifestUnlocked());
  assert(videoBoot.m_count==1&&!videoBoot.m_items[0].deleteAfterUpload);
+ item.status=QSTATUS_FAILED;strcpy(item.lastError,"HTTP 413");assert(q.saveManifestUnlocked());
+ UploadQueue failedBoot;assert(failedBoot.loadManifestUnlocked()&&failedBoot.m_count==1);
+ assert(failedBoot.m_items[0].status==QSTATUS_FAILED&&!strcmp(failedBoot.m_items[0].lastError,"HTTP 413"));
  printf("PASS actual manifest: %zu cut boundaries, %d I/O failures, short writes, recovery and counters\n",snapshots.size(),saveOps);
 }
 '''

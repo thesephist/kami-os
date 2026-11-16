@@ -378,7 +378,7 @@ def focused_sheet(frames, screen_scale=2, transparent=False):
     text(
         80,
         2382,
-        f"280 × 240 screens at {screen_scale}×  ·  IMG_6997.jpg  ·  Native firmware pixels · supplied photo in previews",
+        f"280 × 240 screens at {screen_scale}×  ·  reference-photo.jpg  ·  Native firmware pixels · supplied photo in previews",
         22,
     )
     return sheet, states
@@ -870,7 +870,7 @@ def render(
         wrap(
             88,
             3955,
-            "Screens use the supplied IMG_6997.jpg as viewfinder content. Preview frames use the production raster and Instrument font; menus use the current Scene builder, list styling and safe-area geometry. Opening/error examples are representative. Variable system status is omitted from source-rendered screens.",
+            "Screens use the supplied reference-photo.jpg as viewfinder content. Preview frames use the production raster and Instrument font; menus use the current Scene builder, list styling and safe-area geometry. Opening/error examples are representative. Variable system status is omitted from source-rendered screens.",
             3304,
             24,
         )

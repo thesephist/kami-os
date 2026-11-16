@@ -5,7 +5,7 @@ No device/media changes. Uses pinned ArduinoJson through the protocol validator.
 from pathlib import Path
 import os, subprocess, tempfile, sys
 ROOT=Path(__file__).resolve().parents[1]
-JSON=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'))
+JSON=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'))
 with tempfile.TemporaryDirectory() as directory:
     p=Path(directory)
     def write(name,text):
@@ -91,12 +91,12 @@ int checkpoints=0,cancelAt=0,mutateAt=0;
 bool checkpoint(void*){++checkpoints;if(checkpoints==mutateAt)++modified;return checkpoints!=cancelAt;}
 void checkIdentify(){
  const char* path="/videos/VID_fixture.avi";
- std::vector<uint8_t> data(2051);for(size_t i=0;i<data.size();++i)data[i]=uint8_t(i);
+ std::vector<uint8_t> data(16387);for(size_t i=0;i<data.size();++i)data[i]=uint8_t(i);
  files[path]=data;
  auto r=initial();maxRead=0;checkpoints=0;
  assert(identify(path,r,checkpoint,nullptr)==Identify::Ready);
- assert(r.media.bytes==2051&&!strcmp(r.media.sha256,"67060da644f4b4c17a08c6e8c62e2f11c40251a030a936ed0e6bfb1084075945"));
- assert(checkpoints==5&&maxRead==1024&&!opened&&!allocations);
+ assert(r.media.bytes==16387&&!strcmp(r.media.sha256,"3fc12eaeba40cfc3e8fc2615bc587c415ab83d1567403fb2e115eeb6722491e2"));
+ assert(checkpoints==5&&maxRead==8192&&!opened&&!allocations);
  assert(identify(path,r,checkpoint,nullptr)==Identify::Ready);
  files[path][100]^=1;assert(identify(path,r,checkpoint,nullptr)==Identify::Changed);files[path]=data;
  for(int cancel=1;cancel<=5;++cancel){

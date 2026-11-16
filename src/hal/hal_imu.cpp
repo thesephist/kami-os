@@ -12,6 +12,27 @@ static LSM6DSLSensor* s_imu        = nullptr;
 static bool           s_pedoEnabled = false;
 static uint8_t        s_gyroUsers   = 0;
 
+// Sensor correction (gyro bias, accel offset/scale) installed by the
+// calibration service. Copied under a spinlock so a reader never sees a torn
+// update; the copy is a few dozen bytes and involves no I/O.
+static portMUX_TYPE s_correctionLock = portMUX_INITIALIZER_UNLOCKED;
+static core::imu_sensor_calibration::Correction s_correction =
+    core::imu_sensor_calibration::identity();
+
+void setCorrection(const core::imu_sensor_calibration::Correction* correction) {
+  const auto next = correction ? *correction : core::imu_sensor_calibration::identity();
+  portENTER_CRITICAL(&s_correctionLock);
+  s_correction = next;
+  portEXIT_CRITICAL(&s_correctionLock);
+}
+
+core::imu_sensor_calibration::Correction correction() {
+  portENTER_CRITICAL(&s_correctionLock);
+  const auto copy = s_correction;
+  portEXIT_CRITICAL(&s_correctionLock);
+  return copy;
+}
+
 // ── Hardware single-tap (TAP_SRC 0x1C) ───────────────────────────────────────
 // Threshold: 5-bit, 1 LSB = FS/2^5. At FS=2g: 1 LSB = 62.5 mg.
 // ShockTime: max tap pulse width  (1 LSB = 8/ODR; at 416 Hz ≈ 19 ms per LSB).
@@ -64,46 +85,50 @@ bool init() {
 
   // The STM32duino API unusually expects an 8-bit address and shifts it
   // internally. Its default HIGH constant is 0xD6, which becomes 7-bit 0x6B.
-  s_imu = new LSM6DSLSensor(&Wire1, LSM6DSL_ACC_GYRO_I2C_ADDRESS_HIGH);
-  if (!s_imu) return false;
-  if (s_imu->begin() != LSM6DSL_STATUS_OK) return false;
-  s_imu->Enable_X();
-  // Gyro is unused by any active feature; left in power-down to save ~3.8 mA.
+  auto* sensor = new LSM6DSLSensor(&Wire1, LSM6DSL_ACC_GYRO_I2C_ADDRESS_HIGH);
+  if (!sensor) return false;
+  if (sensor->begin() != LSM6DSL_STATUS_OK || sensor->Enable_X() != LSM6DSL_STATUS_OK) {
+    delete sensor;
+    return false;
+  }
+  // Games acquire the gyro on demand; leave it powered down while idle.
 
   // Pedometer is enabled FIRST so the subsequent tap/wake-up calls (both force
   // ODR → 416 Hz) win the ODR race.  services::init() → enableStepCounter()
   // will see s_pedoEnabled = true and return early, not touching ODR again.
-  if (s_imu->Enable_Pedometer() == LSM6DSL_STATUS_OK) {
+  if (sensor->Enable_Pedometer() == LSM6DSL_STATUS_OK) {
     // Enable_Pedometer() routes step-detection to INT1 by default, which would
     // wake the device from battery sleep on every step.  Clear it so steps fire
     // INT2 instead.  INT2 is not wired on this PCB; the pulse sinks harmlessly.
-    LSM6DSL_ACC_GYRO_W_STEP_DET_on_INT1((void*)s_imu,
+    LSM6DSL_ACC_GYRO_W_STEP_DET_on_INT1((void*)sensor,
                                          LSM6DSL_ACC_GYRO_INT1_PEDO_DISABLED);
     s_pedoEnabled = true;
   }
 
   // Single-tap: route interrupt to INT2 so INT1 stays dedicated to wake-up.
   // Forces ODR → 416 Hz.
-  s_imu->Enable_Single_Tap_Detection(LSM6DSL_INT2_PIN);
-  s_imu->Set_Tap_Threshold(kTapThreshold);
-  s_imu->Set_Tap_Shock_Time(kTapShockTime);
-  s_imu->Set_Tap_Quiet_Time(kTapQuietTime);
+  sensor->Enable_Single_Tap_Detection(LSM6DSL_INT2_PIN);
+  sensor->Set_Tap_Threshold(kTapThreshold);
+  sensor->Set_Tap_Shock_Time(kTapShockTime);
+  sensor->Set_Tap_Quiet_Time(kTapQuietTime);
 
   // Wake-up: route to INT1 (IMU_INT1_PIN) for esp_sleep_enable_ext0_wakeup.
   // Forces ODR → 416 Hz, winning the race against pedometer's 26 Hz.
-  s_imu->Enable_Wake_Up_Detection(LSM6DSL_INT1_PIN);
+  sensor->Enable_Wake_Up_Detection(LSM6DSL_INT1_PIN);
   // Require 2 consecutive samples above threshold before declaring a wake event,
   // filtering out single-sample spikes (table bumps, transients).
-  LSM6DSL_ACC_GYRO_W_WAKE_DUR((void*)s_imu, kWakeUpDur);
-  s_imu->Set_Wake_Up_Threshold(kWakeUpThreshold);
+  LSM6DSL_ACC_GYRO_W_WAKE_DUR((void*)sensor, kWakeUpDur);
+  sensor->Set_Wake_Up_Threshold(kWakeUpThreshold);
 
+  s_imu = sensor;  // Publish only a fully initialized driver.
   return true;
 }
 
 bool isReady() { return s_imu != nullptr; }
 
 bool acquireGyroscope() {
-  if (!s_imu) return false;
+  // A missed boot probe must not disable every motion game until reboot.
+  if (!init()) return false;
   if (s_gyroUsers > 0) {
     ++s_gyroUsers;
     return true;
@@ -132,13 +157,30 @@ void releaseGyroscope() {
 
 bool isGyroscopeEnabled() { return s_gyroUsers > 0; }
 
-bool readAxes(int32_t accel[3], int32_t gyro[3]) {
+bool readRawAxes(int32_t accel[3], int32_t gyro[3]) {
   if (!s_imu) return false;
   if (s_imu->Get_X_Axes(accel) != LSM6DSL_STATUS_OK) return false;
   if (s_imu->Get_G_Axes(gyro)  != LSM6DSL_STATUS_OK) return false;
   return true;
 }
+
+bool readAxes(int32_t accel[3], int32_t gyro[3]) {
+  if (!readRawAxes(accel, gyro)) return false;
+  const auto c = correction();
+  core::imu_sensor_calibration::applyAccel(c, accel);
+  core::imu_sensor_calibration::applyGyro(c, gyro);
+  return true;
+}
+
+static bool readRawAcceleration(int32_t accel[3]);
+
 bool readAcceleration(int32_t accel[3]) {
+  if (!readRawAcceleration(accel)) return false;
+  core::imu_sensor_calibration::applyAccel(correction(), accel);
+  return true;
+}
+
+static bool readRawAcceleration(int32_t accel[3]) {
   if (!s_imu) return false;
   // The bundled STM32duino IO_Read reports success even on short I2C reads.
   // Check both transactions so the UI can back off without ingesting garbage.
@@ -225,12 +267,17 @@ int readGyroFifo(int32_t outMdps[][3], int maxSamples) {
     unsigned take = words / 3;
     if (take > 8) take = 8;
     if (take > (unsigned)(maxSamples - n)) take = maxSamples - n;
-    if (!fifoRead(0x3E, raw, (uint8_t)(take * 6))) return n ? n : -1;
+    if (!fifoRead(0x3E, raw, (uint8_t)(take * 6))) {
+      if (!n) return -1;
+      break;                                        // keep (and correct) what was read
+    }
     for (unsigned i = 0; i < take; ++i, ++n)
       for (unsigned a = 0; a < 3; ++a)
         outMdps[n][a] = (int32_t)(int16_t)((uint16_t)raw[i * 6 + a * 2] | ((uint16_t)raw[i * 6 + a * 2 + 1] << 8)) * 35;
     words -= take * 3;                              // 35 mdps/LSB at 1000 dps full scale
   }
+  const auto c = correction();
+  for (int i = 0; i < n; ++i) core::imu_sensor_calibration::applyGyro(c, outMdps[i]);
   return n;
 }
 

@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix="cine-exif-") as td:
 #include <stdint.h>
 namespace services {namespace uploads {
 struct Queue {uint32_t generatePath(const char*,const char*,char*,size_t){return 0;}
- bool enqueue(const char*,const char*,const char*,bool){return false;}};
+ bool enqueue(const char*,const char*,const char*,bool,uint32_t){return false;}};
 inline bool ensureInit(){return true;} inline Queue& queue(){static Queue q;return q;}
 }}
 ''')
@@ -46,6 +46,7 @@ inline bool ensureInit(){return true;} inline Queue& queue(){static Queue q;retu
 #include <map>
 #include <string>
 #include <vector>
+namespace core {namespace time {bool isSynced(){return false;}}}
 std::map<std::string,std::vector<uint8_t>> files;
 int locks=0,opens=0,closes=0,writes=0,failPart=-1;bool failOpen=false;
 struct File {

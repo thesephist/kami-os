@@ -43,7 +43,7 @@ WavPlayer::~WavPlayer() {
     while (!stopTask()) {}  // Keep owner/buffers alive until the worker has finished.
     worker_.cancelCleanup();
     if (sessionOpen_) closeSession();
-    else if (fileOpen_) stopTrack();
+    else if (fileOpen_ || memoryPcm_) stopTrack();
     if (ring_.buf) heap_caps_free(ring_.buf);
     if (pcmBuf_) heap_caps_free(pcmBuf_);
 }
@@ -169,6 +169,9 @@ bool WavPlayer::startTrack(const char* path) {
     bytesPerFrame_ = parsed.bytesPerFrame;
     lastGoodFilePos_ = dataStart_;
     avi_ = parsed.avi; aviChunkEnd_ = dataStart_; aviSamplesRead_ = 0; streamFailed_ = false;
+    masterRecording_ = info_.channels == 1 &&
+        (!strncmp(path, "/recordings/", 12) || !strncmp(path, "/videos/", 8));
+    recordingDsp_.reset(info_.hz);
 
     nameFromPath(path, info_.title, sizeof(info_.title));
     progress_.reset();
@@ -199,6 +202,23 @@ bool WavPlayer::startTrack(const char* path) {
     return true;
 }
 
+bool WavPlayer::startPcm(const int16_t* pcm,uint32_t frames,uint32_t rate,bool loop) {
+    if (!pcm || !frames || frames>256000 || rate<8000 || rate>48000 ||
+        !sessionOpen_ || !sessionReady_ || !backgroundIoPaused_ || !ready()) return false;
+    auto* owned=static_cast<int16_t*>(heap_caps_malloc(frames*sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!owned) return false;
+    memcpy(owned,pcm,frames*sizeof(int16_t));
+    PlaybackWorker::Control control(worker_);
+    if (!control || worker_.cleanupPending() || !worker_.running()) {heap_caps_free(owned);return false;}
+    stopTrackUnlocked();
+    memoryPcm_=owned;memoryFrames_=frames;memoryPosition_=0;memoryLoop_=loop;
+    info_={};info_.hz=rate;info_.channels=1;info_.durationMs=uint32_t(uint64_t(frames)*1000/rate);
+    strncpy(info_.title,"Generated audio",sizeof(info_.title)-1);
+    progress_.reset();outputProgress_.reset();outputSampleRemainder_=0;wantsNext_=false;streamFailed_=false;clearSpectrum();
+    if (!hal::audio::txBegin(rate)) {stopTrackUnlocked();return false;}
+    playing_=true;usageTrackActive_=true;core::usage::emit("recordings","audio.start");return true;
+}
+
 bool WavPlayer::stopTrack() {
     PlaybackWorker::Control control(worker_);
     if (!control) return false;
@@ -223,6 +243,8 @@ void WavPlayer::stopTrackUnlocked() {
         hal::bus::unlockSpi();
         fileOpen_ = false;
     }
+    heap_caps_free(memoryPcm_);memoryPcm_=nullptr;
+    memoryFrames_=memoryPosition_=0;memoryLoop_=false;
     ring_.reset();
     currentPath_[0] = 0;
 }
@@ -230,6 +252,9 @@ void WavPlayer::stopTrackUnlocked() {
 bool WavPlayer::restartTrack() {
     PlaybackWorker::Control control(worker_);
     if (!control) return false;
+    if (memoryPcm_) {
+        memoryPosition_=0;ring_.reset();progress_.reset();outputProgress_.reset();outputSampleRemainder_=0;wantsNext_=false;playing_=true;return true;
+    }
     if (!fileOpen_ || dataStart_ == 0 || bytesPerFrame_ == 0) return false;
     playing_ = false;
     hal::bus::lockSpi();
@@ -246,6 +271,7 @@ bool WavPlayer::restartTrack() {
     outputSampleRemainder_ = 0;
     lastGoodFilePos_ = dataStart_;
     aviChunkEnd_ = dataStart_; aviSamplesRead_ = 0; streamFailed_ = false;
+    recordingDsp_.reset(info_.hz);
     wantsNext_ = false;
     clearSpectrum();
     for (int i = 0; i < 12 && ring_.free() > 2048; ++i) {
@@ -376,6 +402,7 @@ bool WavPlayer::recoverSdFile_() {
 }
 
 bool WavPlayer::atEndOfFile_() {
+    if (memoryPcm_) return !memoryLoop_ && memoryPosition_>=memoryFrames_;
     bool atEnd = false;
     hal::bus::lockSpi();
     if (fileOpen_) {
@@ -421,6 +448,21 @@ bool WavPlayer::prepareAviAudioChunk_() {
 }
 
 bool WavPlayer::pumpFileToRing_() {
+    if (memoryPcm_) {
+        if (!pcmBuf_ || !memoryFrames_) return false;
+        int frames=ring_.free()/2;
+        if(frames>pcmBufSamples_)frames=pcmBufSamples_;
+        if(frames<=0)return false;
+        int count=0;
+        while(count<frames){
+            if(memoryPosition_==memoryFrames_){if(!memoryLoop_)break;memoryPosition_=0;}
+            pcmBuf_[count++]=memoryPcm_[memoryPosition_++];
+        }
+        if(!count)return false;
+        analyzeVis_(pcmBuf_,count,1);
+        core::dsp::pushStereoWithVolumeBasisPoints(pcmBuf_,count,1,scaledVolumeBasisPoints(),ring_);
+        progress_.add((uint32_t)count,(uint32_t)info_.hz);return true;
+    }
     if (!fileOpen_ || !pcmBuf_ || bytesPerFrame_ == 0) return false;
 
     hal::bus::lockSpi();
@@ -476,6 +518,7 @@ bool WavPlayer::pumpFileToRing_() {
     if (gotFrames <= 0) return false;
 
     if (avi_.audioSamples) aviSamplesRead_ += uint32_t(gotFrames);
+    if (masterRecording_) recordingDsp_.process(pcmBuf_, gotFrames, info_.channels);
     analyzeVis_(pcmBuf_, gotFrames, info_.channels);
     progress_.add((uint32_t)gotFrames, info_.hz);
     core::dsp::pushStereoWithVolumeBasisPoints(pcmBuf_, gotFrames, info_.channels,
@@ -526,7 +569,7 @@ void WavPlayer::taskFn_(void* arg) {
     while (!self->worker_.stopRequested()) {
         if (!self->worker_.beginIteration()) { vTaskDelay(pdMS_TO_TICKS(1)); continue; }
         unsigned waitMs = 10;
-        if (self->playing_ && self->fileOpen_ && self->ring_.buf) {
+        if (self->playing_ && (self->fileOpen_ || self->memoryPcm_) && self->ring_.buf) {
             while (self->ring_.free() > 2048) {
                 if (!self->pumpFileToRing_()) break;
             }
@@ -564,7 +607,7 @@ bool WavPlayer::stopTask() {
 namespace services { namespace audio {
 void WavPlayer::pause() { if (playing_.exchange(false)) core::usage::emit("recordings","audio.pause"); }
 void WavPlayer::resume() {
- if (worker_.running() && !worker_.cleanupPending() && fileOpen_ && !playing_.exchange(true))
+ if (worker_.running() && !worker_.cleanupPending() && (fileOpen_ || memoryPcm_) && !playing_.exchange(true))
   core::usage::emit("recordings","audio.resume");
 }
 } }

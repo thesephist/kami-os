@@ -12,7 +12,7 @@ public:
     enum class BrowseResult { Ready, UploadsBusy, NetworkBusy, Pending };
     using LoadResult = hal::sd::PhotoCatalogResult;
     using File = hal::sd::PhotoFile;
-    struct SyncStatus { int pending; int failed; bool connected; };
+    struct SyncStatus { int pending; int failed; bool connected; uint32_t confirmed; bool transferring; };
     Library() = default;
     ~Library() { close(); }
     Library(const Library&) = delete;
@@ -30,13 +30,14 @@ public:
     // Photos retain catalog-first deletion. Videos use media_delete queue leases
     // and manifest confirmation before removing the file. Neither deletes cloud copies.
     bool removeAt(size_t index, int* removedUploads);
-    int beginSync(); // Returns initial pending count; preserves the catalog.
+    int beginSync(); // Returns initial outstanding and failed count, or -1 if unavailable; preserves the catalog.
     SyncStatus syncStatus() const;
     void close();
 private:
     hal::sd::PhotoCatalog catalog_;
     background_network::PeripheralReservation reservation_;
     agent_coordination::TransportPause browseAgentPause_;
+    uint32_t syncStartConfirmed_ = 0;
     bool active_=false, browseReady_=false;
 };
 } }

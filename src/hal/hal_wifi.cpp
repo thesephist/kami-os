@@ -87,7 +87,7 @@ static bool s_deferWifiRestore = false;
 // after the WiFi-off-UI-core refactor.
 static volatile bool s_connectPending     = false;
 static wifi_mode_t   s_pendingConnectMode = WIFI_MODE_STA;
-static volatile bool s_credentialsChangedPending = false;
+static std::atomic<bool> s_credentialsChangedPending{false};
 static std::atomic<bool> s_reconnectPending{false};
 
 enum class QrCommand : uint8_t { None, Scan, Join, Release };
@@ -221,9 +221,9 @@ bool init() {
 
   // Must run before WiFi.mode()/esp_wifi_init(). On the pinned S3 SDK, static
   // mode reserves eight RX and eight TX buffers even while idle. Arduino's
-  // dynamic mode retains four RX buffers and allocates TX on demand. Our
-  // esp_wifi_init boundary caps its TX pool at eight to preserve internal/DMA
-  // memory for TLS AES and audio during sustained uploads as well as idle.
+  // dynamic profile retains four RX buffers. Our esp_wifi_init boundary replaces
+  // its on-demand TX allocation with four reserved DMA buffers, preserving
+  // packet storage across audio/camera fragmentation of the internal heap.
   WiFi.useStaticBuffers(false);
   WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
     portENTER_CRITICAL(&s_qrMux);
@@ -669,6 +669,10 @@ void stop() {
   s_restorePending = false;
   s_wifiSuspended = true;  // freeze the BLE/WiFi reconcile until restore()
   setRadioState(RadioState::Suspended, "temporary stop");
+  // Offline provisioning BLE retains internal DMA-capable RAM. Suspend it
+  // before camera allocation, as the QR radio owner does. Reconciliation
+  // restores BLE after restore() returns ownership to OfflineBle.
+  if (hal::ble::started()) hal::ble::deinit();
 
   Serial.println("[wifi] Stopping...");
   WiFi.softAPdisconnect(true);
@@ -685,6 +689,7 @@ void powerDown() {
   s_restorePending = false;
   s_wifiSuspended = true;  // freeze the BLE/WiFi reconcile until restore()
   setRadioState(RadioState::Suspended, "deep power-down");
+  if (hal::ble::started()) hal::ble::deinit();
   Serial.println("[wifi] Powering down (deep deinit)...");
   WiFi.softAPdisconnect(true);
   WiFi.disconnect(true);
@@ -819,13 +824,16 @@ void requestCredentialsChanged() {
   s_credentialsChangedPending = true;
 }
 
+bool credentialsChangePending() { return s_credentialsChangedPending.load(); }
+
 void servicePendingCredentialsChanged() {
-  if (!s_credentialsChangedPending) return;
+  if (!s_credentialsChangedPending.load()) return;
+  struct Completion {
+    ~Completion() { s_credentialsChangedPending.store(false); }
+  } completion;
   if (!s_initialized) {
-    s_credentialsChangedPending = false;
     return;
   }
-  s_credentialsChangedPending = false;
 
   // If camera/photos already own the radio, only refresh the manager's cache.
   // The later restore request will choose WiFi or BLE from the new count.

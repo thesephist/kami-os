@@ -15,3 +15,12 @@ __pycache__/
 
 /.venv/
 /.local/
+/.firmware-tool.json
+/.ota-provisioning.json
+/.origami/
+
+# Private capture/review outputs belong in cache or the local lab.
+/artifacts/
+/captures/
+/screenshots/
+/Kami-Cine-Camera-*

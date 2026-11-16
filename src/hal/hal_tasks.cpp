@@ -18,10 +18,10 @@ static constexpr Spec kSpecs[] = {
     { "ui",           CORE_UI,    PRIO_REALTIME,    12288 },  // measured minFree 4204B at 14336
     { "wifi_mgr",     CORE_SVC,   PRIO_SERVICE,      4096 },  // Id::WifiMgr
     { "svc",          CORE_SVC,   PRIO_SERVICE,      6144 },  // quote persistence needs SD/JSON call depth; replaces 16KB quote worker
-    // The former 4 KB stack buffer now lives on the heap. 10 KB retains 2 KB
-    // more call-depth room than the old overflowing 8 KB layout while leaving
-    // a contiguous internal-RAM block for TLS/AES allocations.
-    { "uploadq",      CORE_SVC,   PRIO_BACKGROUND,  10240 },  // Id::UploadQ
+    // Live video receipt/TLS handling left only 92 B at 10 KiB. Use the
+    // existing 12 KiB shared network slot; this adds headroom without another
+    // internal-RAM allocation or increasing the reserved stack pool.
+    { "uploadq",      CORE_SVC,   PRIO_BACKGROUND,  12288 },  // Id::UploadQ
     { "kami_ws",      CORE_SVC,   PRIO_NETWORK,      7168 },  // measured minFree 3668B at 8192
     { "qr_scan",      CORE_SVC,   PRIO_SERVICE,      8192 },  // Id::QrScan: 22KB decode scratch moved to PSRAM
     // Decoder input/PCM buffers live in PSRAM/static storage. 3584 B leaves
@@ -45,6 +45,9 @@ static constexpr Spec kSpecs[] = {
     { "ota_download", CORE_SVC,   PRIO_BACKGROUND,  12288 },
     { "ota_notice",   CORE_SVC,   PRIO_BACKGROUND,  10240 },
     { "haptic",       CORE_SVC,   PRIO_REALTIME,     3072 },
+    // Move 4096 B PCM scratch to PSRAM, preserving the measured 2820 B margin
+    // while fitting Camera-fragmented internal heaps (largest block 7668 B).
+    { "ggwave_rx",    CORE_SVC,   PRIO_SERVICE,      4096 },
     { "video_write",  CORE_SVC,   PRIO_BACKGROUND,   4096 },
     { "video_read",   CORE_SVC,   PRIO_BACKGROUND,   4096 },
     // Probe WAV finalization left only 336 B free at 4096 on rev4; retain
@@ -63,11 +66,14 @@ struct Observation {
 };
 static Observation s_observations[(size_t)Id::_Count];
 // These workers alternate under background_network admission; OTA holds a
-// firmware_update network reservation while downloading.
+// firmware_update network reservation while downloading. GGWave holds a
+// PeripheralReservation that stops the network workers for its whole lifetime.
 // Camera acquisition holds a peripheral reservation excluding UploadQ/NetPoll
 // and borrows this storage without another permanent stack or a fragmented
 // 4 KiB allocation. The HAL slot also excludes concurrent OTA stack use;
 // ordinary feature admission still applies.
+// QR scanning holds the same camera/peripheral reservation and borrows this
+// slot after network workers stop, avoiding a fragmented 8 KiB allocation.
 // Reserve their one internal stack so TLS/SD heap fragmentation cannot prevent
 // either from restarting. Do not reduce TLS stack headroom or use PSRAM stacks.
 static constexpr size_t kNetworkStackBytes = 12288;
@@ -89,10 +95,15 @@ static_assert(kSpecs[(size_t)Id::UploadQ].stackBytes <= kNetworkStackBytes &&
               kSpecs[(size_t)Id::NetPoll].core == CORE_SVC &&
               kSpecs[(size_t)Id::OtaDownload].stackBytes == kNetworkStackBytes &&
               kSpecs[(size_t)Id::OtaDownload].core == CORE_SVC &&
+              kSpecs[(size_t)Id::GgWave].stackBytes <= kNetworkStackBytes &&
+              kSpecs[(size_t)Id::GgWave].core == CORE_SVC &&
               kSpecs[(size_t)Id::VideoCapture].stackBytes <= kNetworkStackBytes &&
               kSpecs[(size_t)Id::VideoCapture].core == CORE_SVC,
               "Shared network stack must fit all registered workers");
-static bool usesNetworkStack(Id id) { return id == Id::UploadQ || id == Id::NetPoll || id == Id::OtaDownload || id == Id::VideoCapture; }
+static_assert(kSpecs[(size_t)Id::QrScan].stackBytes <= kNetworkStackBytes &&
+              kSpecs[(size_t)Id::QrScan].core == CORE_SVC,
+              "QR scanner must fit the shared internal network stack");
+static bool usesNetworkStack(Id id) { return id == Id::UploadQ || id == Id::NetPoll || id == Id::OtaDownload || id == Id::GgWave || id == Id::VideoCapture || id == Id::QrScan; }
 static_assert(kSpecs[(size_t)Id::Mp3Play].stackBytes == kPlaybackStackBytes &&
               kSpecs[(size_t)Id::WavPlay].stackBytes == kPlaybackStackBytes &&
               kSpecs[(size_t)Id::Mp3Play].core == CORE_SVC &&

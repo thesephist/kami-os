@@ -3,7 +3,9 @@
 #include "core/dizzy_feedback.h"
 #include "hal/hal_io.h"
 #include "services/haptic_playback.h"
+#include "core/store.h"
 #include <Arduino.h>
+#include <string.h>
 
 namespace services { namespace vibration {
 using namespace core::alert_vibration;
@@ -15,6 +17,9 @@ Owner owner=Owner::None;
 bool pulseActive=false;
 uint32_t pulseStart=0,pulseDuration=0;
 bool navEnabled=true,dizzyRequested=false;
+bool hapticsLoaded=false,hapticsOn=true;
+bool feedbackOwner(Owner who){return who==Owner::Navigation||who==Owner::Dizzy||who==Owner::Widget||
+  who==Owner::Tennis||who==Owner::Bowling||who==Owner::Golf;}
 core::haptic::Effect navTick,navSelect;
 bool navInitialized=false;
 uint32_t effectStartCount=0;
@@ -48,8 +53,21 @@ void servicePreview(uint32_t now,bool available) {
   output(Owner::Preview,activeAt(previewValue,now-previewStart));
 }
 bool previewing() { return previewActive; }
+bool hapticsEnabled() {
+  if(!hapticsLoaded){hapticsLoaded=true;bool saved=true;
+    if(core::store::getBlob("vibration","haptics",&saved,sizeof(saved)))hapticsOn=saved;}
+  return hapticsOn;
+}
+bool setHapticsEnabled(bool enabled) {
+  if(!core::store::putBlob("vibration","haptics",&enabled,sizeof(enabled)))return false;
+  hapticsLoaded=true;hapticsOn=enabled;
+  if(!enabled && feedbackOwner(owner))output(Owner::None,false);
+  if(!enabled)dizzyRequested=false;
+  return true;
+}
 bool pulse(Owner who,uint32_t duration) {
   if(who==Owner::None || duration==0 || duration>10000)return false;
+  if(feedbackOwner(who) && !hapticsEnabled())return false;
   output(who,true);
   pulseStart=millis();pulseDuration=duration;pulseActive=true;
   return true;
@@ -60,10 +78,12 @@ void servicePulse(uint32_t now,bool available) {
 }
 namespace {
 bool startEffect(const core::haptic::Effect& e,Owner who) {
-  if((owner==Owner::Haptic || owner==Owner::Navigation || owner==Owner::Dizzy) && !effectPlaying())owner=Owner::None;
+  if(feedbackOwner(who) && !hapticsEnabled())return false;
+  if((owner==Owner::Haptic || owner==Owner::Navigation || owner==Owner::Dizzy || owner==Owner::Widget) && !effectPlaying())owner=Owner::None;
   if(!core::haptic::valid(e) || previewActive ||
-     (owner!=Owner::None && owner!=Owner::Navigation && owner!=Owner::Haptic && owner!=Owner::Dizzy))return false;
-  if(who==Owner::Navigation && owner==Owner::Haptic)return false;
+     (owner!=Owner::None && owner!=Owner::Navigation && owner!=Owner::Haptic && owner!=Owner::Dizzy && owner!=Owner::Widget))return false;
+  if(who==Owner::Widget && owner==Owner::Haptic)return false;
+  if(who==Owner::Navigation && (owner==Owner::Haptic || owner==Owner::Widget))return false;
   if(who==Owner::Dizzy && owner!=Owner::None && owner!=Owner::Dizzy)return false;
   if(!(who==Owner::Dizzy ? haptic_playback::startLoop(e,core::haptic::DizzyFeedback::kMaximumMs) : haptic_playback::start(e)))return false;
   ++effectStartCount;
@@ -71,14 +91,24 @@ bool startEffect(const core::haptic::Effect& e,Owner who) {
   return true;
 }
 }
+bool widgetCue(const char* name) {
+  if(!name)return false;
+  core::haptic::Effect e;
+  bool inhale=!strcmp(name,"breathe_in"),exhale=!strcmp(name,"breathe_out");
+  if(inhale||exhale){e.count=inhale?4:6;for(unsigned i=0;i<e.count;++i){auto& p=e.pulses[i];p.startMs=i*1000;p.durationMs=140;p.intensity=inhale?uint8_t(25+i*10):uint8_t(65-i*8);}}
+  else if(!strcmp(name,"complete")){e.count=2;e.pulses[0]={0,120,45};e.pulses[1]={300,180,30};}
+  else return false;
+  return startEffect(e,Owner::Widget);
+}
+void stopWidgetCue(){release(Owner::Widget);}
 bool playEffect(const core::haptic::Effect& e) { if(!startEffect(e,Owner::Haptic))return false;recentCue=Cue::None;return true; }
 void stopEffect() {
   if(owner==Owner::Haptic || owner==Owner::Navigation || owner==Owner::Dizzy)output(Owner::None,false);
 }
 void serviceEffect(uint32_t now,bool available) {
   (void)now;
-  if(!available)stopEffect();
-  else if(!effectPlaying() && (owner==Owner::Haptic || owner==Owner::Navigation || owner==Owner::Dizzy))owner=Owner::None;
+  if(!available){stopWidgetCue();stopEffect();}
+  else if(!effectPlaying() && (owner==Owner::Haptic || owner==Owner::Navigation || owner==Owner::Dizzy || owner==Owner::Widget))owner=Owner::None;
 }
 bool effectPlaying(){return haptic_playback::status().playing;}
 uint32_t effectMaxGapMs(){return (haptic_playback::status().maxGapUs+999)/1000;}

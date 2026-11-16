@@ -1,19 +1,19 @@
-> **thesephist/kami-os fork.** Based on upstream `cf3d1ce` (v1.0.5 + legacy recovery fix). Adds Cine camera and a faster newest-first Photos gallery with wraparound. Home B opens Cine; the built-in Camera remains available in the application selector.
+> **thesephist/kami-os fork.** Based on upstream `de0f204` (v1.0.9). Adds Cine camera and a faster newest-first Photos gallery with wraparound. Home B opens Cine; the built-in Camera remains available in the application selector.
 >
-> Cine defaults to Sunny WB and **C+0 S+1 · B0**: the sensor sRGB approximation, exact vendor +1 saturation matrix, and native 3MP JPEG saves. See [stock/Cine differences](docs/cine-camera-review.md) and [validation](docs/cine-camera-validation.md).
+> Cine starts in continuous Auto exposure with Sunny Color. The wheel selects Color first, then shutter; hold it to restore Auto. Six sensor-ISP Color modes, an 8× gain ceiling, native 3MP QS8 JPEG saves, and camera/exposure EXIF form the current baseline. See [stock/Cine differences](docs/cine-camera-review.md) and [validation](docs/cine-camera-validation.md).
+>
+> GitHub Actions, automated releases and repository webhooks are disabled for this fork. Run checks and builds locally.
 
 ## Working on this fork
 
 ```sh
-git clone git@github.com:thesephist/kami-os.git
+git clone https://github.com/thesephist/kami-os.git
 cd kami-os
 git remote add upstream https://github.com/Origami-Computing/origami-firmware-public.git
-python3 tools/run_fork_checks.py
-# Set up the local build environment once:
 python3 -m venv .venv
-.venv/bin/python -m pip install platformio==6.2.0
+.venv/bin/python -m pip install platformio==6.2.0 -r tools/requirements-test.txt
 ./build.sh
-python3 tools/run_fork_checks.py --sdk
+.venv/bin/python tools/run_fork_checks.py --sdk
 ```
 
 Host checks require Python 3 and a C++ compiler with AddressSanitizer/UndefinedBehaviorSanitizer. They use generated fixtures, not private photos, a connected device, or scratch directories. The SDK check additionally uses the pinned JPEGDEC source downloaded by the build and Pillow (`python3 -m pip install -r tools/requirements-test.txt`, in your Python environment). CI builds the production target and runs these checks. To format only added C++ files, install `clang-format==18.1.8` and run `python3 tools/format_fork.py` (or `--check`).
@@ -60,7 +60,9 @@ This produces a **custom production-policy build**, not an official signed OTA r
 
 ## Firmware
 
-This source targets **v1.0.5**, adding on-device video recording with audio and local playback within Photos. Videos appear alongside photos with previews and duration labels; Back returns to the selected gallery item. Tap B for a photo; hold B for 1.2 seconds to start video, release to keep recording, and tap B again to save. Camera Settings selects VGA or 720p. Clips remain on the SD card; cloud video processing is not enabled by this firmware release. Preview/playback run below the recording frame rate. The MP3 metadata fix, batched analytics, and Public-default migration remain included. See [published releases](https://github.com/Origami-Computing/origami-firmware-public/releases) for available binaries.
+This source targets **v1.0.6**. It adds a reworked onboarding flow and Wi-Fi setup by sound, an App Store that installs signed native apps by QR or six-digit code, IMU calibration, a clock that survives deep sleep, battery sleep with alarm wake, faster wake to Home, automatic upload of saved recordings, and memory and network recovery fixes. Native app packages load only with a valid publisher signature and matching hashes.
+
+Earlier releases added on-device video recording with audio and local playback within Photos (v1.0.4) and Public updates without an OTA enrollment key (v1.0.5).
 
 Run `python3 tools/test_mp3_metadata.py` and `python3 tools/test_playback_start_admission.py` for the metadata, decoder, seeking and failed-start regression checks.
 
@@ -80,4 +82,4 @@ Run `python3 tools/test_mp3_metadata.py` and `python3 tools/test_playback_start_
 
 Origami’s original source is offered under [MIT](LICENSE), as selected for this migration. Existing third-party licenses continue to govern their respective components. Origami confirmed ownership of its artwork and generated font for this migration. Upstream components retain their own licenses; see [distribution requirements](docs/distribution.md).
 
-Public updates in v1.0.5 require no OTA enrollment key. HTTPS, signed manifests, image hashes, hardware/layout checks and update confirmation remain mandatory. Private and Staging retain developer authorization. This change only takes effect after installation; legacy recovery is qualified separately for each supported updater and partition layout.
+Public updates since v1.0.5 require no OTA enrollment key. HTTPS, signed manifests, image hashes, hardware/layout checks and update confirmation remain mandatory. Private and Staging retain developer authorization. This change only takes effect after installation; legacy recovery is qualified separately for each supported updater and partition layout.

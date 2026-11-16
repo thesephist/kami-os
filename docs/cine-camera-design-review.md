@@ -46,7 +46,7 @@ battery and clock drawing. Source-rendered status values are representative;
 device captures preserve actual values.
 
 The November 12, 2026 export uses fresh complete device captures for Home and both
-settings states, and current production renders with the original IMG_6997.jpg for
+settings states, and current production renders with the original reference-photo.jpg for
 four viewfinder states. The supplied photograph is illustrative, not a new Kami
 capture. An earlier November 9 menu raster comparison matched its then-current
 application area exactly; those older framebuffer digests do not describe today's

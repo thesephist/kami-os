@@ -30,7 +30,7 @@ No whole-SDK/codec memory-safety claim is made. Persistent I2C teardown failure 
 
 ## Sunny/Cine-only revision — November 8, 2026
 
-- Production build passed; verified application-only install on scratch `44:B1:76:C6:14:40`, with verified recovery image, unchanged protected metadata, normal boot and no panic observed.
+- Production build passed; verified application-only install on scratch `designated test device`, with verified recovery image, unchanged protected metadata, normal boot and no panic observed.
 - Actual capture service and ISP register transaction passed ASan/UBSan host fixtures, including allocation/teardown failures, borrowed frames, bounds, failure rollback and the read-only gamma snapshot (output unchanged on read failure). Actual ISP service tests cover static WB cycling, WB failure rollback and exact vendor-gamma copying/guards. HAL/JPEG are mocked in the capture-service fixture; the register transaction uses a failure-injected register bus.
 - Dependency architecture check passed across 285 core/service/SFX files.
 - Real A events cycle Sunny → Cloudy → Office → Home → Sunny twice; no Auto. Reopening restores Sunny. Positive wheel steps shorten exposure: 1/10 s → 1/12.5 s; endpoints remain 1/1000–1/10 s. C opens a controls summary with no Stock choice and returns without another camera initialization.
@@ -84,7 +84,7 @@ Report: `.origami/artifacts/cine-subtle-overlay-20261109/index.html`; hardware: 
 
 - Selected the main-grid **C+0 S+1 · B0** look, superseding the earlier A3/negative-offset exploration. Production uses the exact pinned OV3660 +1 saturation CMX (`1d60030d84918a76140198`). sRGB gamma remains unchanged; SDE contrast/brightness and lens shading remain bypassed. No additional black cutoff, Filmic or software grading.
 - ASan/UBSan actual ISP-service tests verify the exact selected and neutral vendor tables, unchanged gamma, invalid-value guards, WB cycling/rollback and diagnostic fitted-matrix isolation. Actual capture-service and failure-injected HAL transaction tests passed. Architecture check: 286 files; whitespace check passed.
-- Production build and verified application-only installation on scratch `44:B1:76:C6:14:40` passed. Prior image verified for recovery; protected metadata unchanged; new boot observed without panic.
+- Production build and verified application-only installation on scratch `designated test device` passed. Prior image verified for recovery; protected metadata unchanged; new boot observed without panic.
 - Hardware: default and post-shutter/post-WB captures retain saturation +1 in JSON sidecars, native 2048×1536 output, no Filmic/fitted matrix, EC0. Explicit neutral/+1 transactions read back their exact CMX bytes with identical gamma/control flags. Gamma/color enabled; SDE and lens shading off. Reopen restores Sunny, shutter mode and hidden transient wheel controls.
 - These checks validate configuration and functionality. The archived RAW grid approximates the sensor pipeline; it is not a bit-exact guarantee of final photographic appearance. This run does not retune exposure or judge quality from the current scene.
 
@@ -93,11 +93,11 @@ Evidence: `.origami/artifacts/cine-saturation-plus1-20261109/device-results.json
 
 ## Managed-fork cleanup — November 9, 2026
 
-- Pre-cleanup snapshot: `cine-baseline-c0-s1-b0-20261109` (`d312307`). Cleanup: `912036a`. The original upstream history is retained. Local checkout: `/home/thesephist/src/kami-os`; GitHub: `https://github.com/thesephist/kami-os`.
+- Pre-cleanup development snapshots are retained privately. The public fork retains upstream history; use `git diff upstream/main...main` to review the current changes. GitHub: `https://github.com/thesephist/kami-os`.
 - All 18 focused checks passed, including portable ASan/UBSan Cine fixtures, actual HAL ISP/shutter transactions with injected failures, preview/gear/fade rendering, DMA isolation, shared camera reservation/frame-loan guards, stock still capture, Photos navigation/catalog and pinned real JPEGDEC gallery rendering. The new runner is `python3 tools/run_fork_checks.py --sdk`; its SDK fixture dependency is declared in `tools/requirements-test.txt`.
 - The initial inherited session mocks omitted our HAL additions, and the gallery block test depended on whitespace around namespace braces. Those fixtures were repaired and the affected checks passed. Checks earlier in the run were not rerun after test-only changes.
 - Thirteen files changed only for readability exactly equal the pre-cleanup source after the pinned formatter, including printer logic, RAW tone math and the gallery renderer. Whole-upstream formatting was excluded. All newly tracked source/tests passed the credential scan.
-- Full production build passed. Application-only installation on scratch `44:B1:76:C6:14:40` verified the previous recovery image, new flash, protected metadata and boot; no panic observed. The daily driver was excluded.
+- Full production build passed. Application-only installation on scratch `designated test device` verified the previous recovery image, new flash, protected metadata and boot; no panic observed. The daily driver was excluded.
 - Hardware saves passed at native 2048×1536 after startup, shutter adjustment and WB adjustment. The selected sensor gamma, CMX and control flags read back exactly the same as before cleanup. JSON schema and stable image-control fields match the prior baseline; timings, exposure and paths naturally vary by capture. Reopen restores Sunny/shutter mode with the wheel overlay hidden. No photographic retuning or performance claim is made for this pass.
 
 Local hardware evidence is retained in the scratch workspace at `.origami/artifacts/cine-quality-20261109/`, including `device-results.json` and `baseline-equivalence.json`; it contains no new public photo archive. Firmware artifact: `.origami/artifacts/cine-quality-20261109.bin`. CI is configured to build and run the fork checks; local verification does not assert a remote CI result.
@@ -116,7 +116,7 @@ Local evidence: `.origami/artifacts/cine-polish-design-20261109/device-results.j
 
 ## Upstream v1.0.5 sync — November 9, 2026
 
-- Rebased the four published fork commits onto upstream `cf3d1ce8ecfd7d4e4c63c52c9e25358dcdc52637`, which contains v1.0.5 (`c71e3d3`) and the legacy Staging recovery fix. Rebase completed without conflicts; `git range-diff` reports all four patches identical. Checkpoint `pre-upstream-sync-20261109` retains the previous published head (`d240277`).
+- Rebased the four published fork commits onto upstream `cf3d1ce8ecfd7d4e4c63c52c9e25358dcdc52637`, which contains v1.0.5 (`c71e3d3`) and the legacy Staging recovery fix. Rebase completed without conflicts; `git range-diff` reports all four patches identical. The previous development checkpoint is retained privately.
 - Upstream changes Public OTA access so signed updates need no enrollment key; Private/Staging still require developer authorization. It also corrects legacy recovery manifest versions and their preparation workflow. No camera/gallery or SDK-pin changes were introduced upstream.
 - All 39 fork runtime source files under `src/`, `include/` and `scripts/` match the checkpoint byte-for-byte. The only runtime differences from that checkpoint are upstream's OTA client/header and the v1.0.5 build version. Current README/review provenance and the fork formatter baseline now identify the new upstream.
 - All 20 fork checks passed on the rebased tree. Upstream Public access, authorization policy, resumed downloads, channel/version selection and actual Arduino boot-health checks passed; all 24 publishing/channel/recovery unit tests passed, including the new legacy bridge cases.

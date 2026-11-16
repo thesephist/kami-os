@@ -23,6 +23,7 @@ result=block(header,'    struct UploadResult {')+';'
 code=r'''
 #include "core/secrets.h"
 #include "core/upload_receipt.h"
+#include "services/media_upload_progress.h"
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -144,6 +145,7 @@ int main(){
   failWrite=0;shortWrite=3;fragmented=true;wire.clear();response=receiptResponse(201);
   result=queue.doUpload(item);
   assert(result.kind==UploadQueue::UploadResultKind::HttpResponse && result.httpCode==201);
+  const auto bytes=services::media_upload::current().snapshot();assert(bytes.sent==fileBytes && bytes.total==fileBytes);
   auto length=wire.find("Content-Length: ")+strlen("Content-Length: ");
   assert(std::stoul(wire.substr(length))==wire.size()-(wire.find("\r\n\r\n")+4));
   shortWrite=0;fragmented=false;earlyEof=true;wire.clear();
@@ -176,5 +178,5 @@ code=code.replace('TLS_CONFIGURATION',block(tls_source,'void useRootBundle('))
 code=code.replace('NEGATIVE','true' if args.negative_control else 'false')
 with tempfile.TemporaryDirectory() as directory:
  path=Path(directory);(path/'test.cpp').write_text(code)
- subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(ROOT/'include'),'-I'+os.environ.get('ARDUINOJSON_SRC',str(ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src')),str(path/'test.cpp'),'-o',str(path/'test')],check=True)
+ subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(ROOT/'include'),'-I'+os.environ.get('ARDUINOJSON_SRC',str(ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src')),str(path/'test.cpp'),'-o',str(path/'test')],check=True)
  subprocess.run([str(path/'test')],check=True)

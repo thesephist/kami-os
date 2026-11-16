@@ -52,7 +52,7 @@ Reviewed app events, sensor/frame ownership, preview callbacks, capture buffers,
 
 ## Fork maintenance pass — November 9, 2026
 
-The managed source is now `thesephist/kami-os`, with the original Git history retained. Tag `cine-baseline-c0-s1-b0-20261109` preserves the device-tested state before this pass; use `git diff -w cine-baseline-c0-s1-b0-20261109..main` to review the cleanup with whitespace ignored.
+The managed source is `thesephist/kami-os`. Development snapshots remain in the private archive; use `git diff -w upstream/main...main` to review the current public fork with whitespace ignored.
 
 - Removed the unreachable paired/neutral comparison capture branches, unused WB override, look/color cycling methods without callers, unused preview accessors/state, a duplicate wheel-value formatter, and an ignored UI argument. Reachable photo paths, JSON field names/values, UI, and USB commands retain their behavior.
 - Replaced positional ISP numeric/boolean options with `IspConfig`, `GammaCurve`, and `ColorMatrix`. The matrix type makes the old fitted-matrix/vendor-saturation conflict unrepresentable. Named internal modes distinguish native ISP JPEG, stock diagnostics, and binned/native RAW.

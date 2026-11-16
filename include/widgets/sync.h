@@ -1,38 +1,34 @@
 #pragma once
 
 #include <stddef.h>
+#include "services/custom_apps.h"
 #include <stdint.h>
+#include "core/app_store_qr.h"
 
 namespace widgets {
 namespace sync {
 
 /**
- * Pull all device widgets from the backend onto the SD card.
- *
- * GET <backend>/api/device-widgets (X-Api-Key auth) for the manifest, then
- * each script body, writing /widgets/<slug>/main.lua. Synchronous — blocks
- * the calling task for the duration of the HTTP round-trips.
- *
- * Returns the number of widgets written, or -1 on error (errOut filled with
- * a short human-readable reason).
- */
-int syncFromBackend(char* errOut, size_t errLen);
-
-/**
- * Fetch just ONE widget (by backend id) and write it to /widgets/<slug>/.
+ * Fetch ONE widget by backend ID and install a validated persistent package.
  * Used by the push-driven launch flow (widget_ready) to pull the freshly
  * generated widget without a full manifest sync. Returns 0 on success, -1 on
- * error (errOut filled). Synchronous; call from ui_task.
+ * error (errOut filled). Worker-only; UI callers submit through widgets::storage.
  */
-int syncOne(const char* id, const char* slug, char* errOut, size_t errLen);
+int syncOne(const char* id, const char* slug, char* errOut, size_t errLen,
+            services::custom_apps::Identity* installed = nullptr);
+
+// Existing widget worker only, after network admission. No credentials are sent.
+// On success, a numeric request is replaced with its resolved URL/hash so
+// storage uses the same namespace as a direct package QR. Failure leaves it intact.
+services::custom_apps::Result download(core::app_store::Download&,
+    services::custom_apps::Package&, services::custom_apps::Cancel);
 
 /**
  * Spawn the background poll task (widget_poll, Core 0, PRIO_SERVICE).
  * Call once from services::startBackgroundTasks() after WiFi task is up.
- * The task wakes every WIDGET_POLL_INTERVAL_MS, fetches the manifest, and
- * calls syncFromBackend() only when the manifest has changed.
+ * Services foreground app downloads, targeted launches, and live app data.
  */
-void startPolling();
+bool startPolling(); // false if worker creation failed; safe to retry
 
 /** Wake the existing worker for foreground data; does not bypass admission/rate limits. */
 void requestPoll();
@@ -49,13 +45,6 @@ bool pollingPaused();
 
 /** Resume a poller paused by suspendPolling(). */
 void resumePolling();
-
-/**
- * Returns true (and clears the flag) if a background sync completed since
- * the last call. Safe to call from ui_task — written by widget_poll task
- * using atomic publication and read-clear. Multiple completions coalesce.
- */
-bool takeSyncNotification();
 
 }  // namespace sync
 }  // namespace widgets

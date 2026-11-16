@@ -21,6 +21,9 @@
 #include <string.h>
 #include "app.h"
 #include "services/photo_library.h"
+#include "services/uploads.h"
+#include "services/media_upload_progress.h"
+#include "services/gallery_receipt.h"
 #include "config/ui_layout.h"
 #include "config/ui_theme.h"
 #include "hal/hal_display.h"
@@ -42,9 +45,12 @@ static int         s_count      = 0;
 static int         s_idx        = 0;   // 0 = newest photo
 static bool        s_needRender = false;
 static bool        s_needPhotoRender = true;
+static bool s_offerUpload=false;
 static bool        s_actionsOpen = false;
 static policy::Action s_action = policy::Action::Escape;
 static bool        s_deleteFailed = false;
+static const char* s_uploadError=nullptr;
+static void startSync();
 static const char* s_error = "Cannot read photos";
 static services::photos::Library s_library;
 static services::video::Thumbnail s_thumbnail;
@@ -77,7 +83,7 @@ void dumpStatus(Stream& output) {
                   NavHandler::instance().top() == &app ? 1 : 0,
                   viewing && !s_needRender && (!s_library[s_idx].video || s_thumbnailIndex==s_idx) ? 1 : 0, viewing ? s_idx + 1 : 0, s_count,
                   s_lastRendered ? 1 : 0, (unsigned long)s_lastPixels, s_lastNonblack,
-                  s_actionsOpen ? 1 : 0, s_action == policy::Action::Delete ? "delete" : "esc",
+                  s_actionsOpen ? 1 : 0, s_action == policy::Action::Upload ? "upload" : s_action == policy::Action::Delete ? "delete" : "esc",
                   s_deleteFailed ? 1 : 0,
                   (unsigned long)s_openMs, (unsigned long)s_pauseMs,
                   (unsigned long)s_library.timings().totalUs,
@@ -139,6 +145,7 @@ static void loadPhotos() {
 // ---------------------------------------------------------------------------
 
 static void closeActions() {
+    s_uploadError=nullptr;
     s_actionsOpen = false;
     s_deleteFailed = false;
     s_needPhotoRender = true;
@@ -166,18 +173,55 @@ static void deletePhoto() {
     Serial.printf("[photos] delete ok=1 queue=%d count=%d path=%s\n", removedUploads, s_count, path);
 }
 
+static void uploadSelected() {
+    using E=UploadQueue::VideoEnqueue;
+    if(!s_library.browsing() || s_idx<0 || s_idx>=s_count)return;
+    if(!services::uploads::ensureInit()){
+        s_uploadError="Upload queue unavailable";s_needRender=true;return;
+    }
+    if(!s_library[s_idx].video){
+        auto& queue=services::uploads::queue();
+        const auto& file=s_library[s_idx];
+        const char* name=strrchr(file.path,'/');
+        const auto view=queue.view(name?name+1:file.path);
+        if(view.count && !strcasecmp(view.item.filePath,file.path)){
+            if(view.item.status==QSTATUS_FAILED && queue.forceSend(view.item.id)!=UploadQueue::ForceResult::Scheduled){
+                s_uploadError="Queue busy. Try again.";s_needRender=true;return;
+            }
+            closeActions();startSync();return;
+        }
+        if(queue.enqueue("image",file.path,"image/jpeg",false)){
+            closeActions();startSync();return;
+        }
+        s_uploadError="Cannot queue photo";s_needRender=true;return;
+    }
+    const auto result=services::uploads::queue().enqueueVideo(s_library[s_idx].path);
+    switch(result){
+      case E::Queued: case E::AlreadyQueued: closeActions();startSync();return;
+      case E::Busy:s_uploadError="Upload busy. Try again.";break;
+      case E::Full:s_uploadError="Upload queue full";break;
+      case E::AccountRequired:s_uploadError="Connect your account first";break;
+      case E::AccountChanged:s_uploadError="Queued for another account";break;
+      case E::Invalid:s_uploadError="Cannot upload this video";break;
+      case E::StorageUnavailable:s_uploadError="Cannot save upload request";break;
+    }
+    s_needRender=true;
+}
+
 static void drawActions(ui::scene::Scene& scene, int16_t W, int16_t H) {
     const int16_t width = 122;
     const int16_t height = 32;
     const int16_t gap = 6;
     const int16_t x = W - kScreenInsetX - width;
-    const int16_t top = kSystemStatusBarH + (H - kSystemStatusBarH - 22 - height * 2 - gap) / 2;
-    for (int row = 0; row < 2; ++row) {
-        const bool selected = (row == 0) == (s_action == policy::Action::Delete);
+    const int rows=s_offerUpload?3:2;
+    const int16_t top = kSystemStatusBarH + (H - kSystemStatusBarH - 22 - height * rows - gap*(rows-1)) / 2;
+    for (int row = 0; row < rows; ++row) {
+        const auto action=policy::actionAt(row,s_offerUpload);
+        const bool selected=action==s_action;
         const uint16_t bg = selected ? TFT_BLACK : TFT_WHITE;
         const uint16_t fg = selected ? TFT_WHITE : TFT_BLACK;
         const int16_t y = top + row * (height + gap);
-        const char* id = row == 0 ? "photos.action.delete" : "photos.action.esc";
+        const char* id = action==policy::Action::Upload?"photos.action.upload":action==policy::Action::Delete?"photos.action.delete":"photos.action.esc";
         auto* border = scene.addRect(id, {x, y, width, height}, bg, 6, 2);
         if (border) {
             border->strokeColor = selected ? TFT_WHITE : TFT_BLACK;
@@ -191,12 +235,16 @@ static void drawActions(ui::scene::Scene& scene, int16_t W, int16_t H) {
             scene.addLine("photos.focus.top.bold", x + 5, y + 9, x + 12, y + 16, fg, 3);
             scene.addLine("photos.focus.bottom.bold", x + 5, y + 23, x + 12, y + 16, fg, 3);
         }
-        scene.addLabel(row == 0 ? "photos.action.delete.label" : "photos.action.esc.label",
-                       {(int16_t)(x + 18), y, 76, height}, row == 0 ? "Delete" : "Esc",
+        scene.addLabel(action==policy::Action::Upload?"photos.action.upload.label":action==policy::Action::Delete?"photos.action.delete.label":"photos.action.esc.label",
+                       {(int16_t)(x + 18), y, 76, height}, action==policy::Action::Upload?"Upload":action==policy::Action::Delete?"Delete":"Esc",
                        fg, bg, 2, ui::scene::TextAlign::MiddleCenter, 3);
         const int16_t ix = x + width - 23;
         const int16_t iy = y + 8;
-        if (row == 0) {
+        if(action==policy::Action::Upload){
+            scene.addLine("photos.upload.shaft",ix+8,iy+16,ix+8,iy,fg,3);
+            scene.addLine("photos.upload.left",ix+2,iy+6,ix+8,iy,fg,3);
+            scene.addLine("photos.upload.right",ix+14,iy+6,ix+8,iy,fg,3);
+        } else if (action == policy::Action::Delete) {
             auto* body = scene.addRect("photos.trash.body", {(int16_t)(ix + 2), (int16_t)(iy + 5), 12, 13}, bg, 0, 3);
             if (body) { body->strokeColor = fg; body->strokeWidth = 1; }
             scene.addLine("photos.trash.lid", ix, iy + 3, ix + 16, iy + 3, fg, 3);
@@ -209,9 +257,9 @@ static void drawActions(ui::scene::Scene& scene, int16_t W, int16_t H) {
             scene.addLine("photos.escape.bottom", ix + 10, iy + 14, ix + 16, iy + 8, fg, 3);
         }
     }
-    if (s_deleteFailed) {
+    if (s_deleteFailed || s_uploadError) {
         scene.addRect("photos.delete.error.bg", {0, (int16_t)(H - 44), W, 22}, TFT_WHITE, 0, 4);
-        scene.addLabel("photos.delete.error", {0, (int16_t)(H - 44), W, 22}, "Cannot delete item",
+        scene.addLabel("photos.delete.error", {0, (int16_t)(H - 44), W, 22}, s_uploadError?s_uploadError:"Cannot delete item",
                        TFT_BLACK, TFT_WHITE, 1, ui::scene::TextAlign::MiddleCenter, 5);
     }
 }
@@ -233,27 +281,35 @@ static void onDraw(TFT_eSprite& canvas) {
         const auto sync = s_library.syncStatus();
         const int pend = sync.pending;
         const int failed = sync.failed;
-        int done = s_syncTotal - pend;
-        if (done < 0) done = 0;
-        if (done > s_syncTotal) done = s_syncTotal;
+        const int done = s_syncTotal > 0 && sync.confirmed >= (uint32_t)s_syncTotal
+            ? s_syncTotal : (int)sync.confirmed;
         const bool finished = (pend == 0);
 
         b.clearContent(kUiBg);
         b.panelHeader("sync.title", "Sync to cloud");
-        char line[40];
-        if (s_syncTotal == 0) {
+        char line[48];
+        const auto bytes=services::media_upload::current().snapshot();
+        if (s_syncTotal < 0) {
+            b.labelCenterMuted("sync.msg", "Upload queue unavailable");
+        } else if (s_syncTotal == 0) {
             b.labelCenterMuted("sync.msg", "Nothing to sync");
         } else if (!sync.connected && !finished) {
             b.statusLine("sync.msg", "Connecting Wi-Fi...", kUiMuted);
         } else if (finished) {
             if (failed > 0) snprintf(line, sizeof(line), "Synced %d, %d failed", done, failed);
-            else            snprintf(line, sizeof(line), "All synced (%d)", s_syncTotal);
+            else if (done == s_syncTotal) snprintf(line, sizeof(line), "All synced (%d)", done);
+            else snprintf(line, sizeof(line), "%d uploads confirmed", done);
             b.statusLine("sync.msg", line, kUiFg);
         } else {
-            snprintf(line, sizeof(line), "Uploading %d / %d", done, s_syncTotal);
+            if(sync.transferring && bytes.total)
+                snprintf(line,sizeof(line),"%lu.%02lu / %lu.%02lu MB",
+                         (unsigned long)(bytes.sent/1000000), (unsigned long)(bytes.sent%1000000/10000),
+                         (unsigned long)(bytes.total/1000000), (unsigned long)(bytes.total%1000000/10000));
+            else snprintf(line,sizeof(line),"Waiting to upload...");
             b.statusLine("sync.msg", line, kUiFg);
         }
-        b.progressBar("sync.bar", (uint32_t)done, (uint32_t)(s_syncTotal > 0 ? s_syncTotal : 1));
+        if (!finished && sync.connected && sync.transferring && bytes.total) b.progressBar("sync.bar",bytes.sent,bytes.total);
+        else if (finished && s_syncTotal>0 && done==s_syncTotal) b.progressBar("sync.bar",1,1);
 
         scene.render(canvas);
         hal::display::markAllDirty();
@@ -363,6 +419,7 @@ static void exitApp() {
     s_thumbnail.clear();s_thumbnailIndex=-1;
     s_library.close();
     s_count = 0;
+    s_state = PH_EMPTY; // A covered/closed gallery is no longer watching sync.
 }
 
 static void coverGallery(){
@@ -380,10 +437,11 @@ static void resumeGallery(){hal::display::setFlushObserver(photoFlushed);loadPho
 // connected and unpaused.
 static void startSync() {
     s_browsePending = false;
+    s_state = PH_SYNCING;
+    NavHandler::instance().runtimePolicyChanged();
     s_syncTotal = s_library.beginSync();
     s_syncDoneMs = 0;
     s_syncPollMs = 0;
-    s_state      = PH_SYNCING;
     s_needRender = true;
 }
 
@@ -430,10 +488,11 @@ static void onInput(hal::input::InputEvent ev) {
     if (s_actionsOpen) {
         if (ui::nav::isBackTap(ev)) closeActions();
         else if (ev.type == ET::Scroll) {
-            const auto next = policy::moveAction(s_action, ev.delta);
+            const auto next = policy::moveAction(s_action, ev.delta,s_offerUpload);
             if (next != s_action) { s_action = next; s_needRender = true; }
         } else if (ui::nav::isEnterPress(ev) && !s_needRender) {
             if (s_action == policy::Action::Escape) closeActions();
+            else if(s_action==policy::Action::Upload)uploadSelected();
             else deletePhoto();
         }
         return;  // RB must not start cloud sync while choosing a destructive action.
@@ -461,6 +520,8 @@ static void onInput(hal::input::InputEvent ev) {
     if (s_state != PH_VIEWING) return;     // ignore scroll while syncing / empty
 
     if (ui::nav::isEnterPress(ev) && !s_needRender) {
+        s_uploadError=nullptr;
+        s_offerUpload=!services::gallery_receipt::confirmed(s_library[s_idx].path);
         s_actionsOpen = true;
         s_action = policy::Action::Escape;
         s_deleteFailed = false;
@@ -515,7 +576,10 @@ const ::scene::Screen kScreenPhotos = {
 
 static const ::scene::Screen* const kScreens[] = { &kScreenPhotos };
 static core::health::RuntimePolicy runtimePolicy() {
-    core::health::RuntimePolicy policy{};policy.reportActivity=s_browsePending;return policy;
+    core::health::RuntimePolicy policy{};
+    policy.reportActivity = s_browsePending || s_state == PH_SYNCING;
+    policy.allowIdleReturn = s_state != PH_SYNCING;
+    return policy;
 }
 App app = {"Photos",&kScreenPhotos,nullptr,nullptr,exitApp,"photos","src/apps/photos_app.cpp",
     kScreens,uint8_t(sizeof(kScreens)/sizeof(kScreens[0])),nullptr,runtimePolicy,

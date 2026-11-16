@@ -17,7 +17,8 @@ methods='\n'.join(block(source, marker) for marker in [
     'int UploadQueue::findRunnableIndexUnlocked(', 'int UploadQueue::forcedIndexUnlocked(',
     'bool UploadQueue::applyResetAfterFlightUnlocked(', 'bool UploadQueue::isRetryable(',
     'void UploadQueue::removeItemAtUnlocked(', 'void UploadQueue::rotateItemToBackUnlocked(',
-    'void UploadQueue::deleteFileIfOwnedUnlocked('])
+    'void UploadQueue::deleteFileIfOwnedUnlocked(', 'void UploadQueue::watchDelivery(',
+    'UploadQueue::Delivery UploadQueue::delivery('])
 code=r'''
 #include <cassert>
 #include <cstdio>
@@ -36,12 +37,16 @@ struct {std::vector<std::string> deleted;void remove(const char* p){deleted.empl
 class UploadQueue {public:
 '''+block(header,'    enum class UploadResultKind')+';\n'+block(header,'    struct UploadResult {')+';\n'+r'''
  QueueItem m_items[20]{};int m_count=0,m_mutex=0;
- bool m_uploadPaused=false,m_resetAfterFlight=false;
+ bool m_uploadPaused=false,m_resetAfterFlight=false,m_deliveryConfirmed=false;
+ char m_deliveryPath[96]{},m_deliveryError[48]{};
+ struct Delivery {bool confirmed=false;char error[48]{};};
+ void watchDelivery(const char*);Delivery delivery(const char*)const;
  uint32_t m_nextNetworkRetryAt=0;
  char m_forcedItemId[24]{},m_inFlightId[24]{},m_inFlightPath[96]{},m_lastStatus[64]{};
+ uint32_t m_confirmedCount=0;
  int requests=0,saves=0;std::function<void()> duringUpload;
  UploadResult result{UploadResultKind::HttpResponse,200,true,0};
- UploadResult doUpload(QueueItem& item){++requests;assert(!strcmp(m_inFlightId,item.id));if(duringUpload)duringUpload();assert(!strcmp(m_inFlightId,item.id));strcpy(item.lastError,"injected");return result;}
+ UploadResult uploadWithGalleryReceipt(QueueItem& item){++requests;assert(!strcmp(m_inFlightId,item.id));if(duringUpload)duringUpload();assert(!strcmp(m_inFlightId,item.id));strcpy(item.lastError,"injected");return result;}
  bool saveManifestUnlocked(){++saves;return true;}
  uint32_t jitteredDelayMs(uint32_t n){return n;}
  bool processOnePending();int findRunnableIndexUnlocked(uint32_t)const;int forcedIndexUnlocked()const;
@@ -54,6 +59,16 @@ int main(){
  {UploadQueue q;q.add("video",true);strcpy(q.m_items[0].type,"video");q.deleteFileIfOwnedUnlocked(q.m_items[0]);assert(SD.deleted.empty());}
  {UploadQueue q;q.add("video");q.duringUpload=[&]{q.removeItemAtUnlocked(0);assert(!strcmp(q.m_inFlightId,"video"));};assert(q.processOnePending()&&!q.m_inFlightId[0]);}
 using Kind=UploadQueue::UploadResultKind;
+ // The UI retains a reason after a terminal item disappears; a new watched
+ // attempt clears both its error and success, and never reports another file.
+ for(auto kind:{Kind::HttpResponse,Kind::PermanentItemFailure,Kind::RetryableFailure}){
+  UploadQueue q;q.add("photo");q.watchDelivery("photo");q.result={kind,404,true,0};
+  q.processOnePending();assert(!q.delivery("photo").confirmed&&!strcmp(q.delivery("photo").error,"injected"));
+  assert(!q.delivery("other").error[0]&&!q.delivery(nullptr).confirmed);
+  q.watchDelivery("new-photo");assert(!q.delivery("new-photo").error[0]&&!q.delivery("new-photo").confirmed);
+ }
+ {UploadQueue q;q.add("photo");q.watchDelivery("photo");q.result={Kind::Aborted,-1,false,0};
+  q.processOnePending();assert(!q.delivery("photo").error[0]&&!q.delivery("photo").confirmed);}
  for(auto kind:{Kind::GlobalDeferral,Kind::Aborted}){
   UploadQueue q;q.add("a",true);q.result={kind,-1,false,5000};
   assert(!q.processOnePending());assert(q.m_count==1&&q.m_items[0].status==QSTATUS_PENDING);
@@ -61,8 +76,9 @@ using Kind=UploadQueue::UploadResultKind;
   if(kind==Kind::GlobalDeferral){assert(q.m_nextNetworkRetryAt==now+5000);assert(!q.processOnePending()&&q.requests==1);}
  }
  for(int code:{200,201,204})for(bool owned:{false,true}){
-  SD.deleted.clear();UploadQueue q;q.add("a",owned);q.result={Kind::HttpResponse,code,true,0};
-  assert(q.processOnePending()&&q.m_count==0);assert(SD.deleted.size()==(owned?1:0));
+  SD.deleted.clear();UploadQueue q;q.add("a",owned);strcpy(q.m_deliveryPath,"a");q.result={Kind::HttpResponse,code,true,0};
+  assert(q.processOnePending()&&q.m_count==0&&q.m_deliveryConfirmed&&q.m_confirmedCount==1);assert(SD.deleted.size()==(owned?1:0));
+  assert(q.delivery("a").confirmed&&!q.delivery("other").confirmed);
  }
  SD.deleted.clear();
  // Chunk/session progress cannot delete media or consume the failure budget.
@@ -92,7 +108,7 @@ using Kind=UploadQueue::UploadResultKind;
   assert(q.processOnePending());assert(q.m_count==1&&q.m_items[0].attempts==1&&SD.deleted.empty());}
  for(int code:{400,404,413,415}){
   UploadQueue q;q.add("a",true);q.result={Kind::HttpResponse,code,true,0};
-  assert(q.processOnePending()&&q.m_count==0&&SD.deleted.empty());
+  assert(q.processOnePending()&&q.m_count==1&&q.m_items[0].status==QSTATUS_FAILED&&SD.deleted.empty());
  }
  for(int code:{408,429,500,503}){
   UploadQueue q;q.add("a");q.add("b");q.result={Kind::HttpResponse,code,true,0};
@@ -114,7 +130,7 @@ using Kind=UploadQueue::UploadResultKind;
   assert(!q.processOnePending()&&q.requests==1);
  }
  {UploadQueue q;q.add("a",true);q.m_items[0].attempts=19;q.result={Kind::RetryableFailure,-1,true,0};
-  assert(q.processOnePending()&&q.m_count==0&&SD.deleted.empty());}
+  assert(q.processOnePending()&&q.m_count==1&&q.m_items[0].status==QSTATUS_FAILED&&SD.deleted.empty());}
  {UploadQueue q;q.add("a");q.duringUpload=[&]{q.add("b");};assert(q.processOnePending());
   assert(q.m_count==1&&!strcmp(q.m_items[0].id,"b"));}
  {UploadQueue q;q.add("a");q.add("b");q.duringUpload=[&]{q.removeItemAtUnlocked(0);};
