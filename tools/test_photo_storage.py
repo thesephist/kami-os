@@ -20,6 +20,7 @@ namespace hal {namespace sd {bool ensureDir(const char*);bool mounted();bool exi
     write('core/board_time.h', '#pragma once\n#include <time.h>\nnamespace core {namespace time {bool isSynced();}}\n')
     write('main.cpp',r'''
 #include "services/photo_storage.h"
+#include "hal/hal_sd.h"
 #include "services/uploads.h"
 #include <cassert>
 #include <cstdio>
