@@ -12,12 +12,13 @@
 #include "apps/onboarding_flow.h"
 #include "apps/onboarding_controls.h"
 #include "ui/onboarding_flow_view.h"
+#include "ui/onboarding_exit_prompt.h"
 #include "services/uploads.h"
 #include "services/agent_coordination.h"
 #include "services/vibration.h"
 #include "services/onboarding_progress.h"
 #include "apps/menu_app.h"
-#include "apps/camera_menu_app.h"
+#include "apps/cine_camera_app.h"
 #include "services/photo_storage.h"
 #include "hal/hal_sd.h"
 #include "ui/onboarding_approved_view.h"
@@ -35,6 +36,8 @@
 #include "ui/scene.h"
 #include "ui/onboarding_motion.h"
 #include "ui/home_eyes.h"
+#include "ui/kami_motion.h"
+#include "services/automation.h"
 #include <Arduino.h>
 
 namespace apps { namespace tutorial {
@@ -44,6 +47,9 @@ namespace {
 using onboarding::Input;
 using onboarding::Flow;
 Flow s_flow;
+enum class ExitChoice { Closed, Resume, Exit };
+ExitChoice s_exitChoice=ExitChoice::Closed;
+uint32_t s_promptOpenedAt=0;
 services::custom_apps::Catalog* s_apps=nullptr;uint32_t s_catalogJob=0;bool s_catalogRequested=false;
 onboarding::Controls s_controls;
 bool s_audioSelected=false;
@@ -78,8 +84,6 @@ onboarding::TextPlayback s_text;
 bool s_talkPending=false,s_agentStarted=false;
 bool s_active=false,s_bootChecked=false,s_dirty=true,s_completed=false;
 uint32_t s_started=0,s_lastDraw=0,s_drawUs=0;
-uint32_t s_exitHoldAt=0;
-bool s_exitHolding=false;
 constexpr unsigned kScanReadingPauseMs=2200;
 unsigned s_scanAfter=0;
 int s_scrollFrom=0,s_scrollTarget=0;
@@ -121,7 +125,7 @@ unsigned elapsed(){
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
  if(s_frozen)return s_frozenMs;
 #endif
- return millis()-s_started;
+ return (s_exitChoice==ExitChoice::Closed?millis():s_promptOpenedAt)-s_started;
 }
 const char* dialogueCopy(){return s_wrapped.c_str();}
 void refreshCopy(){s_wrapped=ui::onboarding_approved::wrap(ui::onboarding_approved::copy(s_flow.page));}
@@ -151,6 +155,7 @@ bool load(){
  const auto p=services::onboarding_progress::load();s_flow.reset();s_flow.interest=p.interest;s_flow.account=p.account;s_flow.joinWifi=p.joinWifi;s_flow.setupPublished=p.setupPublished;s_flow.connected=p.connected||hal::wifi::connected();s_flow.origin=p.account?40:(p.joinWifi?41:39);s_flow.setPage(p.page);s_completed=p.completed;return !s_completed;
 }
 void enterView(){
+ s_exitChoice=ExitChoice::Closed;
  s_controls.reset(s_flow.page);s_controlSuccessDrawn=false;s_usbSuccessAt=0;s_catalogRequested=false;
  refreshCopy();s_reviewCached=false;
  stopSpeech();s_speechLetters=s_speechBlips=0;
@@ -169,12 +174,13 @@ void changed(){
 #endif
  releaseDialogue();prepareMotion();s_text.reset();s_scrollFrom=s_scrollTarget=0;s_scrollAt=millis();s_scanAfter=readyAt()+kScanReadingPauseMs;s_started=millis();s_lastDraw=0;s_dirty=true;save();}
 void prepareWorkflow(){
+ app.onPowerHold=[](){return s_flow.page>=Flow::kPowerHome&&s_flow.page<=Flow::kPowerReturn;};
  ui::setNativeFrameOverlay(compositeNavigationHint);
  if(!s_active){s_active=true;load();s_flow.reset();}
  else if(s_flow.page==12){if(s_flow.interest||s_flow.setupPublished)s_flow.account=core::secrets::backendConfig().apiKey[0]!=0;s_flow.wifiReturned(apps::wifi_setup::takeTutorialResult());}
  else if(s_flow.page==19){s_flow.connected=s_flow.connected||hal::wifi::connected();s_flow.menuReturned();}
  else if(s_flow.page==129){auto result=apps::app_store::takeTutorialResult();s_flow.installed|=result==apps::app_store::TutorialResult::Installed;s_flow.setPage(result==apps::app_store::TutorialResult::Back?128:133);}
- else if(s_flow.page==30){auto photo=apps::camera_menu::takeTutorialPhoto();if(photo.valid()){s_photo=photo;s_photoQueued=false;s_flow.page=31;Serial.println("[tutorial-photo] review camera_released=1 reconnect_requested=1 queued=0");}else{s_photoTransport.release();s_flow.page=40;}}
+ else if(s_flow.page==30){auto photo=apps::cine_camera::takeTutorialPhoto();if(photo.valid()){s_photo=photo;s_photoQueued=false;s_flow.page=31;Serial.println("[tutorial-photo] review camera_released=1 reconnect_requested=1 queued=0");}else{s_photoTransport.release();s_flow.page=40;}}
  refreshCopy();
  save();
 }
@@ -188,6 +194,28 @@ void startScanner(){
 }
 void finish();
 void tick(uint32_t now){
+ if(s_exitChoice!=ExitChoice::Closed)return;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+ if(s_frozen){if(now-s_lastDraw>=40)s_dirty=true;return;}
+#endif
+ // The tutorial consumes the ordinary power hold and waits for the requested
+ // two-second release; the existing service still owns sleep and all wake sources.
+ if(s_flow.page==Flow::kPowerHome&&hal::input::buttonCDown()){
+  s_flow.setPage(Flow::kPowerHeld);changed();return;
+ }
+ if(s_flow.page==Flow::kPowerHeld&&!hal::input::buttonCDown()){
+  s_flow.setPage(elapsed()>=2000?Flow::kPowerReturn:Flow::kPowerHome);changed();return;
+ }
+ if(s_flow.page==Flow::kPowerReturn&&elapsed()>=700){
+  if(!services::onboarding_progress::save(Flow::kPowerResume,false,s_flow.interest,s_flow.account,s_flow.joinWifi,s_flow.setupPublished,s_flow.connected)){
+   Serial.println("[tutorial-power] checkpoint failed; sleep blocked");
+   s_flow.setPage(Flow::kPowerHome);changed();return;
+  }
+  Serial.println("[tutorial-power] checkpoint committed; entering existing sleep service");
+  const bool woke=services::doBatterySleep(); // May reboot through deep sleep.
+  if(!woke)services::onboarding_progress::save(Flow::kPowerHome,false,s_flow.interest,s_flow.account,s_flow.joinWifi,s_flow.setupPublished,s_flow.connected);
+  s_bootChecked=false;return;
+ }
  // C click edges are delivered on release by the power-button gesture owner.
  // Read the existing physical level for visual feedback without changing that policy.
  if(s_flow.page==5&&!s_controls.success){
@@ -222,7 +250,7 @@ void tick(uint32_t now){
   if(s_catalogJob&&widgets::storage::take(s_catalogJob,result,nullptr,s_apps)){s_catalogJob=0;s_dirty=true;}
  }
  if(s_flow.page==34){if(elapsed()>=6500){s_flow.outroFinished();finish();}return;}
- if(s_flow.page==30){if(s_photoTransport.pollAcquire())apps::camera_menu::beginTutorialCapture();return;}
+ if(s_flow.page==30){if(s_photoTransport.pollAcquire())apps::cine_camera::beginTutorialCapture();return;}
  if(s_flow.page==Flow::kSending){
   auto* queue=services::uploads::readyQueue();
   const auto delivery=queue?queue->delivery(s_photo.path):UploadQueue::Delivery{};
@@ -244,6 +272,25 @@ void tick(uint32_t now){
 void finish(){s_completed=true;save();NavHandler::instance().popToRoot();}
 void onInput(hal::input::InputEvent ev){
  using ET=hal::input::EventType;Input input;
+ if(s_exitChoice!=ExitChoice::Closed){
+  if(ev.type==ET::Scroll && ev.delta){
+   s_exitChoice=ev.delta<0?ExitChoice::Exit:ExitChoice::Resume;
+   s_dirty=true;
+  }else if(ev.type==ET::ButtonC_Tap){
+   if(s_exitChoice==ExitChoice::Exit){
+    NavHandler::instance().popToRoot();
+   }else{
+    const uint32_t paused=millis()-s_promptOpenedAt;
+    s_started+=paused;
+    if(s_usbSuccessAt)s_usbSuccessAt+=paused;
+    if(s_controls.success)s_controls.successAt+=paused;
+    s_exitChoice=ExitChoice::Closed;
+    s_reviewCached=false;
+    s_dirty=true;
+   }
+  }
+  return;
+ }
  if(onboarding::Controls::accepts(s_flow.page)){
   unsigned haptics=0;
   switch(ev.type){
@@ -301,6 +348,16 @@ void onInput(hal::input::InputEvent ev){
 
 bool onChord(){
  if(s_flow.wifiOnly){NavHandler::instance().pop();return true;}
+ if(s_flow.canExitReplay(s_completed)){
+  if(s_exitChoice==ExitChoice::Closed){
+   s_promptOpenedAt=millis();
+   s_exitChoice=ExitChoice::Resume;
+   stopSpeech();
+   hal::input::suppressUntilButtonsReleased();
+   s_dirty=true;
+  }
+  return true;
+ }
  if(s_flow.page==123){s_flow.setPage(124);changed();return true;}
  if(elapsed()+s_text.offset<readyAt()||!s_flow.beginTalk())return true;
  stopSpeech();save();releaseDialogue();
@@ -378,6 +435,12 @@ void draw(TFT_eSprite& c){
    ui::onboarding_scenes::customMenu(c,s_flow.installed,s_flow.page==134,ms,names,count);
   }else ui::onboarding_scenes::render(c,s_flow.page,ms,selection,detail);
  }
+ if(s_exitChoice!=ExitChoice::Closed){
+  ui::onboarding_flow::exitPrompt(c,s_exitChoice==ExitChoice::Exit);
+  s_drawUs=micros()-started;
+  hal::display::markAllDirty();
+  return;
+ }
  serviceSpeech(ms);
  s_drawUs=micros()-started;hal::display::markAllDirty();
  // Start the dwell after painting, so queued input or a busy UI loop cannot skip green.
@@ -446,7 +509,7 @@ void replay(){
  s_audioSelected=false;
  NavHandler::instance().setWorkflowPolicy({});
  s_talkPending=s_agentStarted=false;
- auto& nav=NavHandler::instance();nav.popToRoot();load();s_flow.reset();s_completed=false;s_active=true;s_bootChecked=true;
+ auto& nav=NavHandler::instance();nav.popToRoot();load();s_flow.reset();s_active=true;s_bootChecked=true;
  services::notifyUserActivity();nav.push(&app);
 }
 void beginWifiSetup(){
@@ -457,15 +520,6 @@ void beginWifiSetup(){
 }
 void serviceBootOffer(){
  auto& nav=NavHandler::instance();
- // Service the whole workflow, including its scanner, menu and Agent children.
- if(s_active && !s_flow.wifiOnly && hal::input::buttonADown() && hal::input::buttonBDown()) {
-  if(!s_exitHolding){s_exitHolding=true;s_exitHoldAt=millis();}
-  if(uint32_t(millis()-s_exitHoldAt)>=5000u){
-   s_exitHolding=false;s_talkPending=s_agentStarted=false;
-   stopSpeech();save();nav.setWorkflowPolicy({});nav.popToRoot();s_active=false;
-   hal::input::suppressUntilButtonsReleased();return;
-  }
- } else s_exitHolding=false;
  if(s_talkPending){
   if(!apps::agent::isAtHomescreen())s_agentStarted=true;
   if(s_agentStarted&&nav.depth()==1&&!nav.systemScreenActive()&&apps::agent::isAtHomescreen()){
@@ -474,8 +528,15 @@ void serviceBootOffer(){
   return;
  }
  if(s_bootChecked||nav.depth()!=1||nav.systemScreenActive())return;
- s_bootChecked=true;
  const auto progress=services::onboarding_progress::load();
+ if(progress.page==Flow::kPowerResume){
+  // Existing boot/shallow-wake owners present their greeting. Alarms and other
+  // root work retain priority; never replace timer-wake policy with a tutorial cue.
+  if(services::automation::wantsInputCapture()||!apps::agent::isAtHomescreen()||ui::kami_motion::active(millis()))return;
+  if(!services::onboarding_progress::save(140,false,progress.interest,progress.account,progress.joinWifi,progress.setupPublished,progress.connected))return;
+  Serial.println("[tutorial-power] accepted wake complete; resuming navigation completion");
+ }
+ s_bootChecked=true;
  load();
  if(!progress.completed){
   if(!progress.offered && !services::onboarding_progress::markOffered()){Serial.println("[tutorial] first-boot marker save failed");return;}
@@ -490,7 +551,7 @@ bool restartForTesting(){
 }
 void printStatus(){Serial.printf("[tutorial] compositedHints=%u\n",s_compositedHints);Serial.printf("[tutorial-route] interest=%u account=%u wifi=%u selection=%u\n",s_flow.interest,s_flow.account,s_flow.joinWifi,s_flow.selection);const auto audio=sfx::typewriterStats();Serial.printf("[tutorial] page=%u elapsed=%u ready=%u active=%u practiced=%u completed=%u reveal=%u scroll=%u agent=%u recording=%u thinking=%u reply=%u error=%u drawUs=%lu fps=%.1f saved=%08lx speechOpen=%u speechBlips=%u audioBlips=%lu audioAvgGap=%lu audioMaxGap=%lu motion=%u\n",s_flow.page,elapsed(),readyAt(),isActive(),s_flow.practiced,s_completed,s_text.offset,s_text.scroll,s_talkPending,apps::agent::isRecording(),apps::agent::isSending(),apps::agent::isOnReplyScreen(),apps::agent::isShowingError(),(unsigned long)s_drawUs,hal::display::currentFps(),(unsigned long)services::onboarding_progress::savedRecordForDevelopment(),s_speechOpen,s_speechBlips,(unsigned long)audio.played,(unsigned long)(audio.played>1?audio.totalGapMs/(audio.played-1):0),(unsigned long)audio.maxGapMs,s_motionReady);}
 bool debugSeek(unsigned page,unsigned ms){
- if(!isActive()||page>143||(page>=12&&page<=15)||page==19||page==20||page==23||page==27||page==30||page==31)return false;
+ if(!isActive()||(page>143&&(page<160||page>162))||(page>=12&&page<=15)||page==19||page==20||page==23||page==27||page==30||page==31)return false;
  s_preview=false;stopSpeech();s_speechLetters=s_speechBlips=0;releaseDialogue();s_text.reset();s_scrollFrom=s_scrollTarget=0;s_scrollAt=millis();s_flow.setPage(page==26?25:page);s_controls.reset(s_flow.page);s_controlSuccessDrawn=false;refreshCopy();s_scanAfter=readyAt()+kScanReadingPauseMs;s_text.scroll=0;s_frozen=true;s_frozenMs=ms;prepareMotion();s_dirty=true;return true;
 }
 bool debugPreview(unsigned page,unsigned ms,unsigned selection,const char* detail){

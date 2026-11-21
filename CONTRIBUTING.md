@@ -15,10 +15,35 @@ pio run -e esp32-s3-menu-n16r8-production
 
 Hardware changes also require focused testing on the matching board. A successful build is not proof of device behavior. Do not upload private logs, credentials, recordings, screenshots of user data, or generated firmware into source control. Preserve third-party notices and document the provenance of new assets.
 
+## Release notes are part of a production promotion
+
+Every production/public firmware version must include a brief entry in
+[CHANGELOG.md](CHANGELOG.md), reviewed against the diff from the previous published
+release. Use 1–8 short, concrete bullets explaining the changed behavior and the
+trigger of each fix. Include additions and relevant upgrade limitations; do not
+reuse a feature list from an older release or say only “bug fixes.” Keep private
+source mappings and device evidence out of the public log.
+
+Update the version and its log together, before building/qualifying the candidate.
+Run `python3 tools/release_notes.py`. CI requires an entry for the configured
+version; publication additionally checks its baseline against the latest public
+release. Automated checks enforce format and version, not the truth or completeness
+of prose: the promotion reviewer must check every user-facing change against the
+public diff and actual verification. Do not claim device validation from a build.
+
+Use `## vX.Y.Z`, then `Published: YYYY-MM-DD at HH:MM AM/PM PST/PDT.`, then
+`Changes since vA.B.C.`, then plain `- ` bullets. Use the publication date and time in
+America/Los_Angeles (PST in winter, PDT during daylight saving time), with a
+12-hour clock. Confirm it before publishing if the schedule changes. Backfilled entries use
+GitHub’s original `published_at` timestamp converted to Pacific time, never the date the notes were edited. Use `Unreleased.` for a candidate until publication; the publisher supplies the
+Pacific timestamp in the release notes. Historical
+entries stay as release records. For a tooling-only or repackaging release, say
+exactly that rather than inventing firmware fixes. See the [promotion runbook](docs/public-promotion.md).
+
 
 Cine development keeps one canonical camera pipeline. `./build.sh` builds the
 production target; `./build.sh --diagnostics` builds the same pipeline with
-only the opt-in upstream encoder trace. Cine inspection/profiling experiments
+only the opt-in upstream encoder trace. Legacy Cine inspection/profiling experiments
 have been removed. Run
 `python3 tools/run_fork_checks.py --sdk` after dependency installation, and check
 `tools/check_cine_build.py --elf PATH` (add `--diagnostics` for that target).

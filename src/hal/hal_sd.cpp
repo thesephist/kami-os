@@ -1,5 +1,6 @@
 #include "hal/hal_sd.h"
 #include <Arduino.h>
+#include <atomic>
 #include <SD.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -19,7 +20,7 @@
 namespace hal {
 namespace sd {
 
-static bool s_mounted = false;
+static std::atomic<bool> s_mounted{false};
 static MountState s_mountState = MountState::NotAttempted;
 static constexpr char kMountPath[] = "/sd";
 struct ReadHandle { int descriptor; };
@@ -132,8 +133,11 @@ bool begin(uint32_t frequency) {
     Serial.println("[sd-clock-trial] actual_hz=20000000");
   }
 #endif
-  if (s_mounted) return true;
-  hal::bus::lockSpi();
+  if (!hal::bus::lockSpi()) return false;
+  if (s_mounted) {
+    hal::bus::unlockSpi();
+    return true;
+  }
   pinMode(SD_CS, OUTPUT);
   pinMode(LCD_CS_PIN, OUTPUT);
   digitalWrite(LCD_CS_PIN, HIGH);
@@ -158,6 +162,16 @@ bool begin(uint32_t frequency) {
   digitalWrite(LCD_CS_PIN, HIGH);
   hal::bus::unlockSpi();
   return true;
+}
+
+bool ensureMediaMounted() {
+  if (mounted()) return true;
+  // Boot can finish before the card is ready or before it is inserted.
+  // A user capture is a bounded retry point. begin() serializes competing
+  // probes and rechecks mount state before touching the shared display bus.
+  const bool ok = begin() || begin(1000000u);
+  Serial.printf("[sd] capture mount retry=%s\n", ok ? "ok" : "failed");
+  return ok;
 }
 
 bool mounted() {
@@ -691,11 +705,15 @@ bool loadBmpRegion(const char* path, uint16_t* imageBuffer, int32_t maxWidth, in
 }
 
 bool fileInfo(const char* path, size_t& bytes, uint32_t& modified) {
-  if (!s_mounted || !path || !hal::bus::lockSpi()) return false;
-  File file = SD.open(path, FILE_READ);
-  const bool ok = file && !file.isDirectory();
-  if (ok) { bytes = file.size(); modified = (uint32_t)file.getLastWrite(); }
-  file.close();
+  if (!s_mounted || !path || path[0] != '/') return false;
+  char fullPath[sizeof(kMountPath) + 272];
+  if (snprintf(fullPath, sizeof(fullPath), "%s%s", kMountPath, path) >= int(sizeof(fullPath))) return false;
+  if (!hal::bus::lockSpi()) return false;
+  // Metadata does not require an open file. Arduino SD.open/getLastWrite
+  // repeats path lookups and allocates a FILE just to obtain this same stat.
+  struct stat info;
+  const bool ok = ::stat(fullPath, &info) == 0 && S_ISREG(info.st_mode);
+  if (ok) { bytes = size_t(info.st_size); modified = (uint32_t)info.st_mtime; }
   hal::bus::unlockSpi();
   return ok;
 }

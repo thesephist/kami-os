@@ -5,8 +5,12 @@
 // A opens settings; the wheel starts in Color and toggles Color/shutter. Popup is transient.
 namespace ui {
 namespace cine_view {
+// Original photographer pulse: 35 ms white hold, then fade out by 140 ms.
+inline unsigned shutterAlpha(uint32_t ageMs) {
+  return ageMs < 35 ? 15 : ageMs < 140 ? (140 - ageMs) * 15 / 105 : 0;
+}
 template <class C>
-void image(C &c, const uint16_t *source, unsigned width, unsigned height, bool pulse = false) {
+void image(C &c, const uint16_t *source, unsigned width, unsigned height, unsigned pulseAlpha = 0) {
   if (!source || !width || !height) {
     c.fillRect(0, 0, 280, 240, 0);
     return;
@@ -19,8 +23,8 @@ void image(C &c, const uint16_t *source, unsigned width, unsigned height, bool p
     const auto *src = source + size_t(y * height / 240) * width;
     for (unsigned x = 0; x < 280; ++x) {
       row[x] = src[sourceX[x]];
-      if (pulse)
-        row[x] = raster::blend(0xffff, row[x], 12);
+      if (pulseAlpha)
+        row[x] = raster::blend(0xffff, row[x], pulseAlpha);
     }
     c.pushImage(0, y, 280, 1, row);
   }
@@ -82,18 +86,19 @@ inline int regularWidth(const char *text) {
 }
 template <class C>
 void chrome(C &c, const char *color, const char *shutter, unsigned phase, bool colorWheel = true,
-            bool showControls = false) {
+            bool showControls = false, const char *clipCaption = nullptr) {
   const unsigned stage = phase / 1000;
-  const char *caption = stage == 1 || stage == 2   ? "CAPTURE"
+  const char *caption = clipCaption ? clipCaption : stage == 1 || stage == 2   ? "CAPTURE"
                         : stage == 3 || stage == 4 ? "SAVING"
                         : stage == 5               ? "SAVED"
                         : stage == 6               ? "SAVE FAILED"
-                                                   : "B: PHOTO";
+                        : stage == 8               ? "SAVED / NOT QUEUED"
+                                                   : "B: PHOTO / HOLD: VIDEO";
   // Backing goes first so the shared capture caption is drawn only once.
   backdrop(c, 52, 197, int(strlen(caption)) * 6 + 8, 18, 128);
   camera_photographer::overlays(c, phase, false, false, false);
   settingsIcon(c);
-  if (!stage)
+  if (!stage || stage == 8)
     pixel_text::text(c, caption, 56, 202, 1, 0xffff);
   if (!showControls)
     return;

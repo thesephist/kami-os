@@ -37,6 +37,7 @@ bool Session::open() {
   hal::camera::Tuning tuning;
   tuning.wb_mode = 1;
   tuning.ae_level = core::cine::aeLevel;
+  tuning.continuousStillPreview = true;
   tuning.allowNightMode = false;
   tuning.lenc = false;
   if (!camera_.start(FRAMESIZE_QXGA, PIXFORMAT_JPEG, &tuning, core::cine::jpegQuantizationScale)) {
@@ -46,10 +47,15 @@ bool Session::open() {
     return false;
   }
   preview_ = static_cast<uint16_t *>(
-      heap_caps_malloc(previewWidth * previewHeight * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+      heap_caps_aligned_alloc(16, previewWidth * previewHeight * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!preview_) {
     snprintf(status_.message, sizeof(status_.message), "Image buffer allocation failed");
     close();
+    return false;
+  }
+  if (!camera_.setStillPreviewSize(false)) {
+    close();
+    snprintf(status_.message, sizeof(status_.message), "Preview size unavailable");
     return false;
   }
   const uint64_t aeAt = esp_timer_get_time();
@@ -131,7 +137,7 @@ bool Session::preview(bool (*shouldAbort)(void *), void *context) {
     return false;
   }
   bool ok = frame.format == PIXFORMAT_JPEG &&
-            core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height, 2048, 1536);
+            core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height, 320, 240);
   if (ok)
     ok = renderIspPreview(frame, shouldAbort, context);
   camera_.returnFrame();
@@ -150,6 +156,10 @@ void Session::adjustShutter(int delta) {
       return;
   }
   int step = int(core::cine::nearestShutter(automatic ? shutter_.actualUs : shutter_.requestedUs));
+  if (!automatic && step == 0 && delta < 0) {
+    resumeAutoExposure();
+    return;
+  }
   int next = delta < -int(core::cine::shutterCount)  ? 0
              : delta > int(core::cine::shutterCount) ? int(core::cine::shutterCount) - 1
                                                      : step + delta;
@@ -161,7 +171,8 @@ void Session::adjustShutter(int delta) {
     return;
   configureExposure(ExposureMode::Manual, core::cine::shutterSpeedsUs[next], shutter_.gainQ4);
 }
-bool Session::capture() {
+bool Session::capture(void (*onFrameReady)(), bool enqueueUpload) {
+  status_.saved = status_.queued = false;
   if (!status_.open)
     return false;
   const uint64_t started = esp_timer_get_time();
@@ -171,6 +182,27 @@ bool Session::capture() {
                             : "Reopen camera for shutter control");
     return false;
   }
+  const auto settings = captureSettings();
+  if (!switchStillSize(true, settings))
+    return false;
+  const bool saved = saveStill(onFrameReady, enqueueUpload);
+  if (!switchStillSize(false, settings))
+    return false;
+  status_.saved = saved;
+  return saved;
+}
+
+bool Session::switchStillSize(bool fullResolution, const hal::camera::CineIspRequest& settings) {
+  autoFrameVts_ = 0;
+  if (camera_.setStillPreviewSize(fullResolution) && restoreSettings(settings))
+    return true;
+  close();
+  snprintf(status_.message, sizeof(status_.message), "Camera size change failed");
+  return false;
+}
+
+bool Session::saveStill(void (*onFrameReady)(), bool enqueueUpload) {
+  const uint64_t started = esp_timer_get_time();
   status_.saved = false;
   status_.photoPath[0] = status_.metadataPath[0] = 0;
   auto target = photos::prepare();
@@ -181,11 +213,14 @@ bool Session::capture() {
   status_.sequence = target.sequence;
   hal::camera::CameraFrame frame{};
   bool acquired = false;
-  for (unsigned i = 0; i < 4; ++i) {
+  for (unsigned i = 0; i < 12; ++i) {
     core::watchdog::feed();
     if (!camera_.read(&frame))
       break;
-    if (frame.dmaStartUs + 25000 >= started && frame.dmaStartUs >= shutterReadyUs_) {
+    if (frame.dmaStartUs + 25000 >= started && frame.dmaStartUs >= shutterReadyUs_ &&
+        core::cine::hasJpegDimensions(frame.buf, frame.len, 2048, 1536) &&
+        frame.format == PIXFORMAT_JPEG &&
+        core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height, 2048, 1536)) {
       acquired = true;
       break;
     }
@@ -195,11 +230,15 @@ bool Session::capture() {
     snprintf(status_.message, sizeof(status_.message), "Fresh sensor frame unavailable");
     return false;
   }
+  photos::markCaptured(target);
+  status_.capturedAtUnix = target.capturedAtUnix;
   const bool sampleValid = autoExposure() ? refreshExposure() : shutter_.valid;
   const auto exposure = sampleValid ? shutter_ : hal::camera::ShutterInfo{};
+  if (onFrameReady) onFrameReady();
   uint8_t exif[core::cine::exifCapacity];
   const core::cine::ExifInfo exifInfo{core::device::firmwareVersion(), colorName(colorMode_),
-      exposure.valid ? exposure.actualUs : 0, uint16_t(frame.width), uint16_t(frame.height), autoExposure()};
+      exposure.valid ? exposure.actualUs : 0, uint16_t(frame.width), uint16_t(frame.height),
+      autoExposure(), target.capturedAtUnix};
   const size_t exifBytes = core::cine::buildExif(exif, sizeof(exif), exifInfo);
   const bool ok =
       frame.format == PIXFORMAT_JPEG &&
@@ -207,6 +246,9 @@ bool Session::capture() {
       photos::write(target, frame.buf, frame.len, exif, exifBytes);
   camera_.returnFrame();
   status_.saved = ok;
+  // Persist the upload request only after the JPEG is saved and the sensor
+  // frame is returned. The camera reservation defers network work until exit.
+  status_.queued = ok && enqueueUpload && photos::enqueue(target);
   snprintf(status_.photoPath, sizeof(status_.photoPath), "%s", target.path);
   snprintf(status_.metadataPath, sizeof(status_.metadataPath), "/cine/SHOT_%05lu.json",
            (unsigned long)status_.sequence);
@@ -237,7 +279,8 @@ bool Session::capture() {
       n > 0 && size_t(n) < sizeof(metadata) &&
       hal::sd::writeFile(status_.metadataPath, reinterpret_cast<const uint8_t *>(metadata), n);
   snprintf(status_.message, sizeof(status_.message),
-           ok ? (metadataOk && exifBytes ? "Photo saved" : "Photo saved; metadata failed")
+           ok ? (enqueueUpload && !status_.queued ? "Photo saved; not queued. Retry in Photos"
+                 : metadataOk && exifBytes ? "Photo saved" : "Photo saved; metadata failed")
               : "Save failed; partial files retained");
   return ok;
 }

@@ -105,6 +105,14 @@ void Session::stop() {
 
 bool Session::running() const { return ownsCamera_ && hal::camera::initialized(); }
 void Session::settle(uint32_t milliseconds) { if (!reader_ && running()) hal::camera::settleAutoExposure(milliseconds); }
+bool Session::setStillPreviewSize(bool fullResolution) {
+    return !reader_ && !frameHeld_ && owner == this && running() &&
+           hal::camera::setStillPreviewSize(fullResolution);
+}
+bool Session::setVideoPreviewSize(bool hd) {
+    return !reader_ && !frameHeld_ && owner == this && running() &&
+           hal::camera::setVideoPreviewSize(hd);
+}
 bool Session::configureCineIsp(const hal::camera::CineIspRequest& request,hal::camera::CineIspReadback* output){return !reader_&&!frameHeld_&&owner==this&&running()&&hal::camera::configureCineIsp(request,output);}
 bool Session::read(hal::camera::CameraFrame* frame) { if (reader_ || frameHeld_ || !running()) return false;
     return frameHeld_ = hal::camera::getFrame(frame); }

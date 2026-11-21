@@ -16,6 +16,7 @@ jobs:
           persist-credentials: false
       - name: Security and architecture regressions
         run: |
+          python3 tools/release_notes.py
           python3 tools/check_tracked_secrets.py
           python3 tools/check_public_distribution.py
           python3 tools/test_public_distribution.py
@@ -35,15 +36,23 @@ jobs:
           python3 tools/test_ota_download_resume.py
           python3 tools/test_ota_versions.py
           python3 tools/test_mp3_metadata.py
-          python3 tools/test_camera_shutter.py
+          python3 tools/test_camera_workflow.py
+          python3 tools/test_cine_video_start.py
+          python3 tools/test_sd_file_info.py
+          python3 tools/test_sfx_pcm.py
           python3 tools/test_media_gallery.py
           python3 tools/test_photo_library.py
           python3 tools/test_video_library.py
           python3 tools/test_camera_session.py
           python3 tools/test_network_stack.py
-          python3 tools/test_camera_video_teardown.py
+          python3 tools/test_cine_service.py
           python3 tools/test_video_recording.py
           python3 tools/test_playback_start_admission.py
+          python3 tools/test_tutorial_lifecycle.py
+          python3 tools/test_tutorial_boot_exit.py
+          python3 tools/test_tutorial_progress.py
+          python3 tools/test_onboarding_controls.py --state-only
+          python3 tools/test_sleep_network_boundary.py
           python3 tools/test_lua_security.py
           python3 -m unittest discover -s tests/ota -v
       - name: Build production firmware
@@ -54,10 +63,6 @@ jobs:
           python3 tools/check_sdk_review.py --map .pio/build/esp32-s3-menu-n16r8-production/firmware.map
           python3 tools/test_sd_write_compat.py
           python3 tools/test_ota_boot_health.py
-      - name: Fork camera and gallery regressions
-        run: |
-          "$RUNNER_TEMP/pio/bin/pip" install -r tools/requirements-test.txt
-          "$RUNNER_TEMP/pio/bin/python" tools/run_fork_checks.py --sdk
       - name: Analytics durability and Public default regressions
         env:
           ARDUINOJSON_SRC: .pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src

@@ -29,6 +29,22 @@ bool seekWriter(StreamWriter*,uint32_t);bool closeWriter(StreamWriter*);
 bool replaceFile(const char*,const char*);bool removeFile(const char*);
 }}
 ''')
+    write('services/uploads.h',r'''#pragma once
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+namespace services { namespace uploads {
+struct Queue {
+ uint32_t generatePath(const char* prefix,const char* ext,char* path,size_t size) {
+  static uint32_t next=1;
+  std::snprintf(path,size,"/upload_queue/%s_%05u%s",prefix,next,ext);
+  return next++;
+ }
+};
+inline Queue* readyQueue(){static Queue queue;return &queue;}
+inline bool ensureInit(){return true;}
+}}
+''')
     write('services/agent_coordination.h',r'''#pragma once
 extern bool failMicAdmission;extern int micLeases;
 namespace services {namespace agent_coordination {
@@ -38,6 +54,7 @@ void release(){if(held_)--micLeases;held_=false;}
 };}}
 ''')
     write('esp_camera.h', '#pragma once\nconstexpr int PIXFORMAT_JPEG=4;\n')
+    with (tmp/'Arduino.h').open('a') as f: f.write('\nstruct SerialStub{template<class...T>void printf(const char*,T...){} };static SerialStub Serial;\n')
     write('esp_timer.h', '#pragma once\n#include <Arduino.h>\ninline int64_t esp_timer_get_time(){return int64_t(millis())*1000;}\n')
     write('services/camera_session.h',r'''#pragma once
 #include <stdint.h>

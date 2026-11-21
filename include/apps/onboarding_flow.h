@@ -5,12 +5,23 @@ enum class Input { A, B, C, Rotate };
 enum class WifiResult { None, Back, Skipped, Failed, Joined };
 // Stable IDs retain the existing camera/menu/service handoff contracts.
 struct Flow {
- static constexpr unsigned kSelect=36,kInterest=37,kAccount=38,kWifiChoice=39,kLogin=40,kWifiWebsite=41,kProjects=42,kSending=43,kFinished=44,kBuildIntro=45,kBuildSetup=46,kBuildConnect=47,kBuildBrowse=48,kBuildDone=49,kPhotoSent=142,kPhotoError=143;
+ static constexpr unsigned kSelect=36,kInterest=37,kAccount=38,kWifiChoice=39,kLogin=40,kWifiWebsite=41,kProjects=42,kSending=43,kFinished=44,kBuildIntro=45,kBuildSetup=46,kBuildConnect=47,kBuildBrowse=48,kBuildDone=49,kPhotoSent=142,kPhotoError=143,kPowerHome=160,kPowerHeld=161,kPowerReturn=162,kPowerResume=165;
  unsigned page=0,origin=kProjects,selection=0,interest=0;
  bool account=false,joinWifi=false,practiced=false,wifiOnly=false,connected=false,setupPublished=false,installed=false;
  void reset(){*this=Flow{};}
  void beginWifiSetup(){reset();wifiOnly=true;page=kWifiWebsite;}
  void setPage(unsigned next){page=next;selection=0;}
+ // Called only while the tutorial owns the visible screen. Child apps handle their own chords.
+ bool canExitReplay(bool completed) const {
+  if(!completed || wifiOnly)return false;
+  switch(page){
+   case 3: case 4: // Individual A and B button lessons.
+   case 25: // Hold A+B to speak to the live agent.
+   case 122: case 123: case 124: // Scripted speaking demonstration.
+    return false;
+   default:return true;
+  }
+ }
  unsigned afterNav()const{return interest==1?125:kBuildIntro;}
  unsigned afterPractice()const{return account&&connected?25:122;}
  bool turn(int delta){
@@ -52,7 +63,8 @@ struct Flow {
    case 25:if(i==Input::A)setPage(18);break;
    case 122:if(i==Input::B)setPage(123);break;
    case 123:if(i==Input::A)setPage(122);break;
-   case 124:if(i==Input::A)setPage(afterPractice());else if(i==Input::B)setPage(140);break;
+   case 124:if(i==Input::A)setPage(afterPractice());else if(i==Input::B)setPage(kPowerHome);break;
+   case kPowerHome:if(i==Input::A)setPage(afterPractice());break;
    case 140:if(i==Input::B)setPage(afterNav());else if(i==Input::A)setPage(afterPractice());break;
    case 125:if(i==Input::B)setPage(connected?127:126);else if(i==Input::A)setPage(interest==1?140:kBuildDone);break;
    case 126:if(i==Input::A)setPage(125);else if(i==Input::C){if(selection)setPage(135);else{setupPublished=true;setPage(kWifiWebsite);}}break;
@@ -74,7 +86,7 @@ struct Flow {
  void photoFailed(){if(page==kSending||page==31)setPage(kPhotoError);}
  void menuReturned(){setPage(practiced?afterPractice():18);}
  bool beginTalk(){if(page==123){setPage(124);return false;}if(page!=25||!account||!connected)return false;setPage(27);return true;}
- void agentReturned(){setPage(140);}
+ void agentReturned(){setPage(kPowerHome);}
  void outroFinished(){setPage(23);}
 };
 // A reveal tap only reveals text; it cannot also advance to another page.

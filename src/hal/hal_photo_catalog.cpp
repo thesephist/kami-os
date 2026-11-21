@@ -31,6 +31,7 @@ int comparePhotos(const void* left, const void* right) {
 int compareMedia(const void* left,const void* right) {
   const auto& a=*static_cast<const PhotoFile*>(left);
   const auto& b=*static_cast<const PhotoFile*>(right);
+  if (a.captureOrder != b.captureOrder) return a.captureOrder > b.captureOrder ? -1 : 1;
   if(a.modified!=b.modified)return a.modified>b.modified?-1:1;
   return comparePhotos(left,right);
 }
@@ -81,7 +82,7 @@ PhotoCatalogResult PhotoCatalog::load(bool includeVideos) {
           auto& entry=files_[count_++];
           const int n=snprintf(entry.path,sizeof(entry.path),"%s/%s",folders[folder],basename(path.c_str()));
           if (n<0 || size_t(n)>=sizeof(entry.path)) {clear();return PhotoCatalogResult::ReadError;}
-          entry.modified=0;entry.video=folder==1;hasVideos=hasVideos||entry.video;
+          entry.modified=0;entry.captureOrder=0;entry.video=folder==1;hasVideos=hasVideos||entry.video;
         }
       }
       if (!pass) {
@@ -103,9 +104,9 @@ PhotoCatalogResult PhotoCatalog::load(bool includeVideos) {
       // A photo-only library stays newest-first by monotonic capture ID even
       // before clock sync, and avoids opening every JPEG just for metadata.
       if (hasVideos || !sequence || end-first>1) for (size_t index=first;index<end;++index) {
-        File entry=SD.open(files_[index].path,FILE_READ);
-        if (!entry) {clear();return PhotoCatalogResult::ReadError;}
-        const time_t modified=entry.getLastWrite();
+        size_t bytes=0;
+        uint32_t modified=0;
+        if (!fileInfo(files_[index].path,bytes,modified)) {clear();return PhotoCatalogResult::ReadError;}
         files_[index].modified=modified>0?uint64_t(modified):0;
         ++timings_.metadataReads;
       }
@@ -122,6 +123,22 @@ PhotoCatalogResult PhotoCatalog::load(bool includeVideos) {
         if (entry.video || !photo_policy::sequence(entry.path)) continue;
         if (entry.modified<previous) entry.modified=previous;
         else previous=entry.modified;
+      }
+    }
+    // Legacy clips have random names. Keep their existing date order, and
+    // sort captures from the first numbered clip onward by their shared ID.
+    uint64_t firstClip = UINT64_MAX;
+    for (size_t i = 0; i < count_ && hasVideos; ++i) {
+      const auto& entry = files_[i];
+      const uint64_t id = photo_policy::videoSequence(basename(entry.path));
+      if (id && id < firstClip) firstClip = id;
+    }
+    if (firstClip != UINT64_MAX) {
+      for (size_t i = 0; i < count_; ++i) {
+        auto& entry = files_[i];
+        const uint64_t id = entry.video ? photo_policy::videoSequence(basename(entry.path)) :
+                                         photo_policy::sequence(entry.path);
+        if (id >= firstClip && id <= UINT32_MAX) entry.captureOrder = static_cast<uint32_t>(id);
       }
     }
     qsort(files_,count_,sizeof(PhotoFile),hasVideos?compareMedia:comparePhotos);

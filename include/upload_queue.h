@@ -46,7 +46,7 @@ public:
     using NetworkReleaseCallback = void (*)();
 
     // Generate a unique file path inside the queue directory.
-    // prefix: "IMG" or "AUD"
+    // IMG and VID_C share the camera capture sequence; AUD uses the audio sequence.
     // ext: ".jpg" or ".wav"
     // Writes full path to outPath (e.g. "/upload_queue/IMG_00012.jpg")
     // Returns the sequence number, or 0 on failure.
@@ -95,7 +95,8 @@ public:
     };
 
     // One mutex-protected observation; pending excludes active transfers.
-    struct Counts { int total = 0, pending = 0, failed = 0, active = 0; uint32_t confirmed = 0; };
+    // retrying is the subset of pending items retaining a non-cancellation error.
+    struct Counts { int total = 0, pending = 0, failed = 0, active = 0, retrying = 0; uint32_t confirmed = 0; };
     Counts counts() const;
     int  size()         const { return counts().total; }
     int  pendingCount() const { return counts().pending; }
@@ -115,6 +116,7 @@ public:
 
     struct View {
         QueueItem item{};
+        Counts counts{};
         int count = 0, index = -1;
         uint32_t waitMs = 0;
         bool paused = false, forced = false, resetPending = false;

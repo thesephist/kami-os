@@ -31,6 +31,13 @@ struct App{};
 namespace apps{namespace cine_camera{App app;}namespace camera_menu{App app;}namespace voice_recorder{App app;}namespace menu{App app;}}
 struct NavHandler{static NavHandler& instance(){static NavHandler n;return n;}App* pushed=nullptr;int popped=0;void push(App* a){pushed=a;}void pop(){++popped;}};
 namespace ui{namespace nav{bool isBackTap(hal::input::InputEvent e){return e.type==hal::input::EventType::ButtonA_Tap;}bool isEnterTap(hal::input::InputEvent e){return e.type==hal::input::EventType::ButtonC_Tap;}}}
+namespace services { namespace camera {
+enum class CaptureResolution { Vga, Hd };
+enum class Setting { Capture };
+} }
+struct { services::camera::CaptureResolution capture=services::camera::CaptureResolution::Vga;
+  void save(services::camera::Setting) {} } cameraSettings;
+bool microphone=true, clipActive=false, tutorialCapture=false;
 struct List{int selected=0,totalItems=3;void scroll(int delta){selected+=delta;if(selected<0)selected=0;if(selected>2)selected=2;}}settingsList;
 struct Session{struct Status{bool open=true;}s;int shutter=0,wb=0;void adjustShutter(int d){shutter+=d;}void adjustColor(int d){wb+=d;}int autoResumes=0;bool resumeAutoExposure(){++autoResumes;return s.open;}const Status& status(){return s;}}session;
 enum class View{Menu,Opening,Preview,Error};View current=View::Preview;
@@ -69,7 +76,7 @@ int main(){using E=hal::input::EventType;
 """
 )
 assert (
-    '{"Camera", &apps::camera_menu::app' in (ROOT / "src/apps/menu_app.cpp").read_text()
+    '{"Camera", &apps::cine_camera::app' in (ROOT / "src/apps/menu_app.cpp").read_text()
 )
 with tempfile.TemporaryDirectory(prefix="cine-interactions-") as td:
     p = Path(td)
@@ -89,5 +96,5 @@ with tempfile.TemporaryDirectory(prefix="cine-interactions-") as td:
     )
     subprocess.run([str(p / "test")], check=True)
 print(
-    "PASS actual Cine/Home input: Select haptic per mode switch, wheel routing, 2s hold, settings/capture, Home B → Cine, stock Camera menu retained; ASan/UBSan"
+    "PASS actual Cine/Home input: Select haptic per mode switch, wheel routing, 2s hold, settings/capture, Home B â†’ Cine, Home and main menu open the same Camera; ASan/UBSan"
 )

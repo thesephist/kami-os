@@ -70,6 +70,8 @@ struct Tuning {
   /** Auto exposure / auto gain. Forcing values manually here makes 90% of "weird color" reports. */
   bool exposure_ctrl = true;
   bool gain_ctrl     = true;
+  // Keep two full-size JPEG buffers for live preview and still-size transitions.
+  bool continuousStillPreview = false;
   // OV3660 night-mode AEC can extend frame intervals in low light. Video
   // preview may disable it without disabling automatic exposure/gain. Other
   // sensors retain their existing AEC2 behavior; this is not a frame-rate cap.
@@ -88,7 +90,7 @@ struct Tuning {
    *
    * Off by default because the firmware load adds ~150 ms to camera init and
    * polls SCCB; turn it on for apps that need close focus (wifi_setup QR scan,
-   * camera_menu_app capture, etc).
+   * camera session capture, etc).
    *
    * AF mode is selected by `singleShotAf` (see below).
    */
@@ -98,7 +100,7 @@ struct Tuning {
    * When `autofocus == true`:
    *   - false (default): continuous AF. The VCM tracks the highest-contrast
    *     region of the scene every frame. Right choice for a live viewfinder
-   *     with moving subjects (camera_menu_app).
+   *     with moving subjects (camera session).
    *   - true: single-shot AF. The firmware sweeps the lens through its full
    *     range once, parks at the highest-contrast position, and stays there.
    *     Right choice for stationary close-up scanning (wifi_setup QR scan):
@@ -165,6 +167,11 @@ struct CineIspReadback {bool valid=false;uint8_t gamma[16]={},cmx[11]={},flags[2
 // Selected Cine ISP color profile and exposure. Finite register allowlist, rollback on
 // write/readback failure. Caller must own the camera with no outstanding loan.
 bool configureCineIsp(const CineIspRequest& request,CineIspReadback* output);
+// Switch sensor output within an existing full-resolution JPEG DMA allocation.
+bool setStillPreviewSize(bool fullResolution);
+// Reuse a live OV3660 QXGA allocation for VGA/HD JPEG (same 12/16 quantization).
+// No outstanding frame; false requires the caller to restart before reuse.
+bool setVideoPreviewSize(bool hd);
 // Read live JPEG exposure registers without changing AE/AGC or camera tuning.
 bool readJpegShutter(ShutterInfo* output);
 // Get next frame. Returns true and fills *out; caller must call returnFrame() when done.

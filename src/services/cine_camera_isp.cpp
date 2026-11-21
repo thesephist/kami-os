@@ -41,6 +41,21 @@ bool Session::refreshExposure() {
   shutter_ = live;
   return true;
 }
+hal::camera::CineIspRequest Session::captureSettings() const {
+  hal::camera::CineIspRequest settings;
+  settings.autoExposure = autoExposure();
+  settings.colorMode = uint8_t(colorMode_);
+  if (!settings.autoExposure) {
+    settings.shutterUs = shutter_.requestedUs;
+    settings.gainQ4 = shutter_.gainQ4;
+  }
+  return settings;
+}
+bool Session::restoreSettings(const hal::camera::CineIspRequest &settings) {
+  colorMode_ = ColorMode(settings.colorMode);
+  return configureExposure(settings.autoExposure ? ExposureMode::Automatic : ExposureMode::Manual,
+                           settings.shutterUs, settings.gainQ4);
+}
 bool Session::resumeAutoExposure() {
   if (!status_.open)
     return false;

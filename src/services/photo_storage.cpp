@@ -8,6 +8,7 @@
 
 namespace services { namespace photos {
 bool initialize() {
+    if (!hal::sd::ensureMediaMounted()) return false;
     (void)uploads::ensureInit();
     return hal::sd::ensureDir("/photos");
 }

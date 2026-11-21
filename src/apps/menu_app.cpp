@@ -12,7 +12,6 @@
  */
 
 #include "apps/menu_app.h"
-#include "apps/cine_camera_app.h"
 #include "widgets/app.h"
 #include "apps/tutorial_app.h"
 #include "ui/onboarding_menu_scene.h"
@@ -22,7 +21,7 @@
 #include "app.h"
 #include "apps/alarm_clock_app.h"
 #include "apps/audio_recordings_app.h"
-#include "apps/camera_menu_app.h"
+#include "apps/cine_camera_app.h"
 #include "apps/doodle_jump_app.h"
 #include "apps/dumb_flappy_bird_app.h"
 #include "apps/mp3_menu_app.h"
@@ -59,7 +58,6 @@ enum Page {
   PAGE_MAIN,
   PAGE_AUDIO,
   PAGE_TIME,
-  PAGE_CUSTOM,
   PAGE_GAMES,
   PAGE_COUNT,
 };
@@ -79,14 +77,14 @@ struct PageDef {
 };
 
 static const MenuEntry kMainEntries[] = {
-    {"Camera", &apps::camera_menu::app, PAGE_COUNT, icons::kCamera},
+    {"Camera", &apps::cine_camera::app, PAGE_COUNT, icons::kCamera},
     {"Photos", &apps::photos::app, PAGE_COUNT, icons::kPhotos},
     {"Audio", nullptr, PAGE_AUDIO, icons::kAudio},
     {"Music", &apps::mp3_menu::app, PAGE_COUNT, icons::kMusic},
     {"Clock", nullptr, PAGE_TIME, icons::kClock},
     {"Settings", &apps::settings_menu::app, PAGE_COUNT, icons::kSettings},
     {"Games", nullptr, PAGE_GAMES, icons::kGames},
-    {"Custom Apps", nullptr, PAGE_CUSTOM, icons::kTools},
+    {"Custom Apps", &widgets::app, PAGE_COUNT, icons::kTools},
 };
 
 static const MenuEntry kAudioEntries[] = {
@@ -98,11 +96,6 @@ static const MenuEntry kTimeEntries[] = {
     {"Alarms", &apps::alarm_clock::app, PAGE_COUNT, icons::kAlarm},
     {"Timer", &apps::timer::app, PAGE_COUNT, icons::kTimer},
     {"Pomodoro", &apps::pomodoro::app, PAGE_COUNT, icons::kFocus},
-};
-
-static const MenuEntry kCustomAppEntries[] = {
-    {"Cine camera", &apps::cine_camera::app, PAGE_COUNT, icons::kCamera},
-    {"Installed apps", &widgets::app, PAGE_COUNT, icons::kTools},
 };
 
 static const MenuEntry kGameEntries[] = {
@@ -122,7 +115,6 @@ static const PageDef kPages[PAGE_COUNT] = {
     {nullptr, kMainEntries, (int)(sizeof(kMainEntries) / sizeof(kMainEntries[0])), PAGE_COUNT},
     {"Audio", kAudioEntries, 2, PAGE_MAIN},
     {"Clock", kTimeEntries, 3, PAGE_MAIN},
-    {"Custom Apps", kCustomAppEntries, (int)(sizeof(kCustomAppEntries) / sizeof(kCustomAppEntries[0])), PAGE_MAIN},
     {"Games", kGameEntries, (int)(sizeof(kGameEntries) / sizeof(kGameEntries[0])), PAGE_MAIN},
 };
 

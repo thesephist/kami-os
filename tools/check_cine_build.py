@@ -56,6 +56,6 @@ print(
     + (
         "optional upstream encoder trace present"
         if a.diagnostics
-        else "Cine inspection/profiling and input trace/cadence absent"
+        else "legacy Cine inspection/profiling and input trace/cadence absent"
     )
 )
